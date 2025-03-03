@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
 from bson import ObjectId
@@ -24,14 +24,11 @@ class PyObjectId(str):
         }
 
 
-class UserModel(BaseModel):
+class RoleModel(BaseModel):
     id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")
-    email: str
-    password: str
-    full_name: str
-    phone_number: Optional[str] = None
-    role_id: Optional[str] = None
-    is_active: bool = True
+    name: str
+    description: Optional[str] = None
+    permissions: List[str] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -40,28 +37,24 @@ class UserModel(BaseModel):
         "arbitrary_types_allowed": True,
         "json_schema_extra": {
             "example": {
-                "email": "user@example.com",
-                "password": "password123",
-                "full_name": "John Doe",
-                "phone_number": "1234567890",
-                "is_active": True
+                "name": "Admin",
+                "description": "Administrator with all permissions",
+                "permissions": ["users:read", "users:write", "roles:read", "roles:write"]
             }
         }
     }
 
 
-class UserDB(UserModel):
-    """User model for database operations"""
+class RoleDB(RoleModel):
+    """Role model for database operations"""
     pass
 
 
-class UserOut(BaseModel):
+class RoleOut(BaseModel):
     id: str = Field(..., alias="_id")
-    email: str
-    full_name: str
-    phone_number: Optional[str] = None
-    role_id: Optional[str] = None
-    is_active: bool
+    name: str
+    description: Optional[str] = None
+    permissions: List[str]
     created_at: datetime
     updated_at: datetime
 
@@ -69,5 +62,3 @@ class UserOut(BaseModel):
         "populate_by_name": True,
         "arbitrary_types_allowed": True
     }
-
-

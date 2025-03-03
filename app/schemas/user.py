@@ -1,5 +1,5 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from bson import ObjectId
 
@@ -24,44 +24,29 @@ class PyObjectId(str):
         }
 
 
-class UserModel(BaseModel):
-    id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")
-    email: str
-    password: str
+class UserBase(BaseModel):
+    email: EmailStr
     full_name: str
     phone_number: Optional[str] = None
-    role_id: Optional[str] = None
     is_active: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-    model_config = {
-        "populate_by_name": True,
-        "arbitrary_types_allowed": True,
-        "json_schema_extra": {
-            "example": {
-                "email": "user@example.com",
-                "password": "password123",
-                "full_name": "John Doe",
-                "phone_number": "1234567890",
-                "is_active": True
-            }
-        }
-    }
 
 
-class UserDB(UserModel):
-    """User model for database operations"""
-    pass
+class UserCreate(UserBase):
+    password: str
 
 
-class UserOut(BaseModel):
-    id: str = Field(..., alias="_id")
-    email: str
-    full_name: str
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
     phone_number: Optional[str] = None
+    password: Optional[str] = None
     role_id: Optional[str] = None
-    is_active: bool
+    is_active: Optional[bool] = None
+
+
+class UserInDB(UserBase):
+    id: str = Field(..., alias="_id")
+    password: str
+    role_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -71,3 +56,26 @@ class UserOut(BaseModel):
     }
 
 
+class UserResponse(UserBase):
+    id: str = Field(..., alias="_id")
+    role_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True
+    }
+
+
+class UserWithPermissions(UserResponse):
+    permissions: List[str] = []
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenPayload(BaseModel):
+    sub: Optional[str] = None
