@@ -1,87 +1,66 @@
-from datetime import timedelta
 from typing import Optional
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
-from bson.objectid import ObjectId
+from datetime import timedelta
+from app.models.user import UserDB
+from bson import ObjectId
 
+from fastapi import HTTPException, status
+from app.core.security import verify_password, create_access_token
+from app.services.user import get_user_by_email, create_user
+from app.services.role import get_role_by_name
+from app.schemas.user import UserCreate, UserInDB
+from app.schemas.auth import Token
 from app.core.config import settings
-from app.core.db import users
-from app.core.security import verify_password, get_password_hash, create_access_token
-from app.schemas.auth import TokenPayload, UserCreate, UserInDB
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
 
 
-async def get_user_by_email(email: str) -> Optional[dict]:
-    return users.find_one({"email": email})
-
-
-async def authenticate_user(email: str, password: str) -> Optional[dict]:
+async def authenticate_user(email: str, password: str) -> Optional[UserDB]:
+    """
+    Authenticate a user
+    """
     user = await get_user_by_email(email)
-    if not user or not verify_password(password, user["hashed_password"]):
+    if not user:
+        return None
+    if not verify_password(password, user.password):
         return None
     return user
 
 
-async def create_user(user_data: UserCreate) -> dict:
-    # Check if user exists
-    user = await get_user_by_email(user_data.email)
-    if user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-
-    # Create user
-    hashed_password = get_password_hash(user_data.password)
-    user_in = {
-        "email": user_data.email,
-        "hashed_password": hashed_password,
-        "full_name": user_data.full_name,
-        "role": user_data.role,
-        "is_active": user_data.is_active,
-        "created_at": None  # MongoDB will set this to current time
-    }
-
-    result = users.insert_one(user_in)
-    user_in["id"] = str(result.inserted_id)
-
-    return user_in
-
-
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
-    try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
-        token_data = TokenPayload(**payload)
-        if token_data.sub is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials",
-            )
-    except JWTError:
+async def login_for_access_token(email: str, password: str) -> Token:
+    """
+    Login for access token
+    """
+    user = await authenticate_user(email, password)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = users.find_one({"_id": ObjectId(token_data.sub)})
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        subject=str(user.id), expires_delta=access_token_expires
+    )
 
-    user["id"] = str(user.pop("_id"))
-    return user
+    return Token(access_token=access_token, token_type="bearer")
 
 
-def get_current_active_user(current_user: dict = Depends(get_current_user)) -> dict:
-    if not current_user.get("is_active"):
+async def register_new_user(user_data: UserCreate) -> UserInDB:
+    """
+    Register a new user
+    """
+    # Check if user with this email already exists
+    existing_user = await get_user_by_email(user_data.email)
+    if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
+            detail="Email already registered",
         )
-    return current_user
+
+    # By default, assign 'employee' role to new users
+    employee_role = await get_role_by_name("Employee")
+
+    user_dict = user_data.dict()
+    if employee_role:
+        user_dict["role_id"] = employee_role.id
+
+    return await create_user(user_dict)
