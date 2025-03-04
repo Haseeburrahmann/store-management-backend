@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
 from app.api.roles import router as roles_router
+from app.api.stores.router import router as stores_router  # Import the router directly
 from app.core.config import settings
 from app.services.role import create_default_roles, get_role_by_name
 from app.services.user import get_user_by_email, create_user
@@ -16,7 +17,7 @@ app = FastAPI(
 # Set up CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["http://localhost:4200","http://localhost:4200/users"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,6 +27,8 @@ app.add_middleware(
 app.include_router(auth_router.router, prefix=f"{settings.API_V1_STR}/auth", tags=["authentication"])
 app.include_router(users_router.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(roles_router.router, prefix=f"{settings.API_V1_STR}/roles", tags=["roles"])
+app.include_router(stores_router, prefix=f"{settings.API_V1_STR}/stores", tags=["stores"])  # Note the change here
+
 
 
 async def create_admin_user():
@@ -56,14 +59,6 @@ async def startup_event():
     await create_default_roles()
     # Create admin user
     await create_admin_user()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:4200","http://localhost:4200/users"],  # Specify your frontend URL exactly
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 @app.get("/")
 async def root():

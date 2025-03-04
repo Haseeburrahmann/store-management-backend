@@ -1,3 +1,4 @@
+# app/core/permissions.py
 from enum import Enum
 from typing import Dict, List, Set
 
@@ -49,6 +50,7 @@ DEFAULT_ROLES = {
 
             # Full access to store management
             get_permission_string(PermissionArea.STORES, PermissionAction.READ),
+            get_permission_string(PermissionArea.STORES, PermissionAction.WRITE),
 
             # Full access to employees, hours, payments
             get_permission_string(PermissionArea.EMPLOYEES, PermissionAction.READ),
@@ -100,7 +102,6 @@ DEFAULT_ROLES = {
         ]
     }
 }
-
 
 def has_permission(user_permissions: List[str], required_permission: str) -> bool:
     """
