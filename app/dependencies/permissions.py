@@ -1,3 +1,4 @@
+# app/dependencies/permissions.py
 from typing import List, Optional
 from fastapi import Depends, HTTPException, status
 from jose import jwt, JWTError
@@ -71,6 +72,10 @@ def has_permission(required_permission: str):
             current_user: UserInDB = Depends(get_current_active_user)
     ):
         user_permissions = await get_user_permissions(current_user)
+
+        # Debug prints
+        print(f"User permissions: {user_permissions}")
+        print(f"Required permission: {required_permission}")
 
         if not check_permissions(user_permissions, required_permission):
             raise HTTPException(
