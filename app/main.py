@@ -8,6 +8,7 @@ from app.api.stores.router import router as stores_router  # Import the router d
 from app.core.config import settings
 from app.services.role import create_default_roles, get_role_by_name
 from app.services.user import get_user_by_email, create_user
+from app.api.employees.router import router as employee_router  # Import the employee router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -27,8 +28,8 @@ app.add_middleware(
 app.include_router(auth_router.router, prefix=f"{settings.API_V1_STR}/auth", tags=["authentication"])
 app.include_router(users_router.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(roles_router.router, prefix=f"{settings.API_V1_STR}/roles", tags=["roles"])
-app.include_router(stores_router, prefix=f"{settings.API_V1_STR}/stores", tags=["stores"])  # Note the change here
-
+app.include_router(stores_router, prefix=f"{settings.API_V1_STR}/stores", tags=["stores"])
+app.include_router(employee_router, prefix=f"{settings.API_V1_STR}/employees", tags=["employees"])
 
 
 async def create_admin_user():

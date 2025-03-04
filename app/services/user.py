@@ -76,9 +76,13 @@ async def update_user(id: str, update_data: Dict[str, Any]) -> Optional[UserDB]:
     if "password" in update_data:
         update_data["password"] = get_password_hash(update_data["password"])
 
-    # Convert role_id to ObjectId if present
+    # Convert role_id to ObjectId if present and valid
     if "role_id" in update_data and update_data["role_id"]:
-        update_data["role_id"] = ObjectId(update_data["role_id"])
+        if ObjectId.is_valid(update_data["role_id"]):
+            update_data["role_id"] = ObjectId(update_data["role_id"])
+        else:
+            # Remove invalid role_id
+            del update_data["role_id"]
 
     update_data["updated_at"] = datetime.utcnow()
 
