@@ -2,28 +2,11 @@
 from typing import Optional
 from datetime import datetime
 from bson import ObjectId
-from pydantic import Field, BaseModel
+from pydantic import Field, BaseModel, EmailStr
+from app.utils.object_id import PyObjectId
 
-# Custom type for handling ObjectId
-class PyObjectId(str):
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid ObjectId")
-        return str(v)
-
-    @classmethod
-    def __get_pydantic_core_schema__(cls, _source_type, _handler):
-        return {
-            "type": "string",
-            "description": "ObjectId"
-        }
-
-class Store(BaseModel):
+class StoreModel(BaseModel):
+    """Database model for stores"""
     id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")
     name: str
     address: str
@@ -31,7 +14,7 @@ class Store(BaseModel):
     state: str
     zip_code: str
     phone: str
-    email: Optional[str] = None
+    email: Optional[EmailStr] = None
     manager_id: Optional[str] = None
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -52,27 +35,4 @@ class Store(BaseModel):
                 "is_active": True
             }
         }
-    }
-
-class StoreDB(Store):
-    """Store model for database operations"""
-    pass
-
-class StoreOut(BaseModel):
-    id: str = Field(..., alias="_id")
-    name: str
-    address: str
-    city: str
-    state: str
-    zip_code: str
-    phone: str
-    email: Optional[str] = None
-    manager_id: Optional[str] = None
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {
-        "populate_by_name": True,
-        "arbitrary_types_allowed": True
     }

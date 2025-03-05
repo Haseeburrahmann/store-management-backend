@@ -1,132 +1,108 @@
-from typing import List, Optional, Dict, Any
-from bson import ObjectId
+# app/services/user.py
 from datetime import datetime
+from typing import List, Optional
+from bson import ObjectId
 from app.core.db import get_database
-from app.models.user import UserDB, UserOut
-from app.core.security import get_password_hash
+from app.models.user import UserModel
+from app.core.security import get_password_hash, verify_password
+from app.utils.formatting import format_object_ids
 
-# Database collection
-users_collection = get_database()["users"]
+# Get database connection once
+db = get_database()
 
-
-async def get_user_by_email(email: str) -> Optional[UserDB]:
+async def get_users(skip: int = 0, limit: int = 100, email: Optional[str] = None, role_id: Optional[str] = None) -> List[dict]:
     """
-    Get a user by email
+    Get all users with optional filtering
     """
-    user_data = await users_collection.find_one({"email": email})
-    if user_data:
-        # Convert ObjectId to string for Pydantic model
-        user_data["_id"] = str(user_data["_id"])
-        if "role_id" in user_data and user_data["role_id"]:
-            user_data["role_id"] = str(user_data["role_id"])
-        return UserDB(**user_data)
-    return None
+    query = {}
+
+    if email:
+        query["email"] = {"$regex": email, "$options": "i"}
+
+    if role_id:
+        query["role_id"] = role_id
+
+    users = await db.users.find(query).skip(skip).limit(limit).to_list(length=limit)
+    # Format ObjectIds to strings
+    return format_object_ids(users)
 
 
-async def get_user_by_id(id: str) -> Optional[UserDB]:
+async def get_user_by_id(user_id: ObjectId) -> Optional[dict]:
     """
-    Get a user by ID
+    Get user by ID
     """
-    # Convert string ID to ObjectId for MongoDB
-    obj_id = ObjectId(id) if isinstance(id, str) else id
-
-    user_data = await users_collection.find_one({"_id": obj_id})
-    if user_data:
-        # Convert ObjectId to string for Pydantic model
-        user_data["_id"] = str(user_data["_id"])
-        if "role_id" in user_data and user_data["role_id"]:
-            user_data["role_id"] = str(user_data["role_id"])
-        return UserDB(**user_data)
-    return None
+    user = await db.users.find_one({"_id": user_id})
+    # Format ObjectIds to strings
+    return format_object_ids(user) if user else None
 
 
-async def create_user(user_data: Dict[str, Any]) -> UserDB:
+async def get_user_by_email(email: str) -> Optional[dict]:
     """
-    Create a new user
+    Get user by email
+    """
+    user = await db.users.find_one({"email": email})
+    return user
+
+
+async def create_user(user_data: dict) -> dict:
+    """
+    Create new user
     """
     # Hash the password
     user_data["password"] = get_password_hash(user_data["password"])
 
-    # Convert role_id to ObjectId if present
-    if "role_id" in user_data and user_data["role_id"]:
-        user_data["role_id"] = ObjectId(user_data["role_id"])
+    # Create user model
+    user_model = UserModel(**user_data)
 
-    user_data["created_at"] = datetime.utcnow()
-    user_data["updated_at"] = datetime.utcnow()
-
-    result = await users_collection.insert_one(user_data)
+    # Insert into database
+    result = await db.users.insert_one(user_model.model_dump(by_alias=True))
 
     # Get the created user
-    created_user = await get_user_by_id(str(result.inserted_id))
+    created_user = await get_user_by_id(result.inserted_id)
     return created_user
 
 
-async def update_user(id: str, update_data: Dict[str, Any]) -> Optional[UserDB]:
+async def update_user(user_id: str, user_data: dict) -> Optional[dict]:
     """
-    Update a user
+    Update existing user
     """
-    # Convert string ID to ObjectId for MongoDB
-    obj_id = ObjectId(id)
+    # Handle password update
+    if "password" in user_data and user_data["password"]:
+        user_data["password"] = get_password_hash(user_data["password"])
 
-    # Don't allow updating the email directly
-    if "email" in update_data:
-        del update_data["email"]
+    # Update timestamp - Fixed version
+    user_data["updated_at"] = datetime.utcnow()
 
-    # Hash the password if it's being updated
-    if "password" in update_data:
-        update_data["password"] = get_password_hash(update_data["password"])
-
-    # Convert role_id to ObjectId if present and valid
-    if "role_id" in update_data and update_data["role_id"]:
-        if ObjectId.is_valid(update_data["role_id"]):
-            update_data["role_id"] = ObjectId(update_data["role_id"])
-        else:
-            # Remove invalid role_id
-            del update_data["role_id"]
-
-    update_data["updated_at"] = datetime.utcnow()
-
-    await users_collection.update_one(
-        {"_id": obj_id}, {"$set": update_data}
+    # Update user
+    await db.users.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$set": user_data}
     )
 
-    return await get_user_by_id(id)
+    # Get updated user
+    updated_user = await get_user_by_id(ObjectId(user_id))
+    # Format before returning to avoid ObjectId validation errors
+    return format_object_ids(updated_user) if updated_user else None
 
 
-async def delete_user(id: str) -> bool:
+async def delete_user(user_id: str) -> bool:
     """
-    Delete a user
+    Delete user
     """
-    # Convert string ID to ObjectId for MongoDB
-    obj_id = ObjectId(id)
-
-    result = await users_collection.delete_one({"_id": obj_id})
+    result = await db.users.delete_one({"_id": ObjectId(user_id)})
     return result.deleted_count > 0
 
 
-async def list_users(skip: int = 0, limit: int = 100) -> List[UserOut]:
+async def authenticate_user(email: str, password: str) -> Optional[dict]:
     """
-    List all users with pagination
+    Authenticate user with email and password
     """
-    users = []
-    cursor = users_collection.find().skip(skip).limit(limit)
+    user = await get_user_by_email(email)
 
-    async for user_data in cursor:
-        # Convert ObjectId to string for Pydantic model
-        user_data["_id"] = str(user_data["_id"])
-        if "role_id" in user_data and user_data["role_id"]:
-            user_data["role_id"] = str(user_data["role_id"])
+    if not user:
+        return None
 
-        # Add default values for any missing required fields
-        if "is_active" not in user_data:
-            user_data["is_active"] = True  # Default to active users
+    if not verify_password(password, user["password"]):
+        return None
 
-            # Update the database
-            await users_collection.update_one(
-                {"_id": ObjectId(user_data["_id"])},
-                {"$set": {"is_active": True}}
-            )
-
-        users.append(UserOut(**user_data))
-
-    return users
+    return user

@@ -1,3 +1,4 @@
+# app/api/auth/router.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta
@@ -25,7 +26,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        subject=str(user.id), expires_delta=access_token_expires
+        subject=str(user["_id"]), expires_delta=access_token_expires
     )
 
     return {"access_token": access_token, "token_type": "bearer"}
@@ -48,22 +49,13 @@ async def register_user(user_in: UserCreate):
     from app.services.role import get_role_by_name
     employee_role = await get_role_by_name("Employee")
     if employee_role:
-        user_dict["role_id"] = str(employee_role.id)
+        user_dict["role_id"] = str(employee_role["_id"])
 
     # Create user
     user = await create_user(user_dict)
 
-    # Convert to response model
-    return UserResponse(
-        _id=user.id,
-        email=user.email,
-        full_name=user.full_name,
-        phone_number=user.phone_number,
-        is_active=user.is_active,
-        role_id=user.role_id,
-        created_at=user.created_at,
-        updated_at=user.updated_at
-    )
+    # Return user directly - it's already in dict format
+    return user
 
 
 @router.get("/me", response_model=UserResponse)

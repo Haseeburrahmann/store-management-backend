@@ -1,14 +1,16 @@
 # app/schemas/employee.py
+from typing import Optional
+from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field, EmailStr
-from app.schemas.user import UserBase, UserCreate, UserUpdate, UserInDB
 
-
-class EmployeeBase(UserBase):
+class EmployeeCreate(BaseModel):
+    """Schema for creating employees"""
+    user_id: Optional[str] = None
     position: str
+    hire_date: Optional[datetime] = None
+    store_id: Optional[str] = None
     hourly_rate: float
-    employment_status: Optional[str] = "active"
+    employment_status: str = "active"  # active, on_leave, terminated
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
     address: Optional[str] = None
@@ -16,24 +18,10 @@ class EmployeeBase(UserBase):
     state: Optional[str] = None
     zip_code: Optional[str] = None
 
-
-class EmployeeCreate(UserCreate, EmployeeBase):
-    store_id: Optional[str] = None
-    hire_date: Optional[datetime] = Field(default_factory=datetime.now)
-
-
-# Completely redefine EmployeeUpdate to make all fields optional
 class EmployeeUpdate(BaseModel):
-    # User fields (from UserUpdate)
-    email: Optional[EmailStr] = None
-    full_name: Optional[str] = None
-    phone_number: Optional[str] = None
-    password: Optional[str] = None
-    role_id: Optional[str] = None
-    is_active: Optional[bool] = None
-
-    # Employee fields
+    """Schema for updating employees"""
     position: Optional[str] = None
+    store_id: Optional[str] = None
     hourly_rate: Optional[float] = None
     employment_status: Optional[str] = None
     emergency_contact_name: Optional[str] = None
@@ -42,43 +30,59 @@ class EmployeeUpdate(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     zip_code: Optional[str] = None
-    store_id: Optional[str] = None
-    hire_date: Optional[datetime] = None
 
-
-class EmployeeInDB(UserInDB, EmployeeBase):
-    store_id: Optional[str] = None
-    hire_date: datetime
+class EmployeeResponse(BaseModel):
+    """Schema for employee responses"""
+    id: str = Field(..., alias="_id")
     user_id: Optional[str] = None
+    position: str
+    hire_date: datetime
+    store_id: Optional[str] = None
+    hourly_rate: float
+    employment_status: str
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {
         "populate_by_name": True,
-        "arbitrary_types_allowed": True,
-        "json_schema_extra": {
-            "example": {
-                "_id": "60d21b4967d0d8992e610c85",
-                "email": "employee@example.com",
-                "full_name": "Employee Name",
-                "phone_number": "555-123-4567",
-                "is_active": True,
-                "password": "**********",
-                "role_id": "60d21b4967d0d8992e610c86",
-                "created_at": "2023-01-01T00:00:00",
-                "updated_at": "2023-01-01T00:00:00",
-                "position": "Cashier",
-                "hire_date": "2023-01-01T00:00:00",
-                "hourly_rate": 15.0,
-                "employment_status": "active",
-                "store_id": "60d21b4967d0d8992e610c87",
-                "user_id": "60d21b4967d0d8992e610c88"
-            }
-        }
+        "arbitrary_types_allowed": True
     }
 
 
-class Employee(EmployeeInDB):
-    pass
+class EmployeeUserCreateModel(BaseModel):
+    """Schema for creating employees with user accounts"""
+    # User fields
+    email: str
+    full_name: str
+    password: str
+    phone_number: Optional[str] = None
+    role_id: Optional[str] = None
 
+    # Employee fields
+    position: str
+    hire_date: Optional[datetime] = None
+    store_id: Optional[str] = None
+    hourly_rate: float
+    employment_status: str = "active"
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
 
-class EmployeeWithStore(Employee):
+class EmployeeWithUserInfo(EmployeeResponse):
+    """Schema for employee with user information"""
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    phone_number: Optional[str] = None
+
+class EmployeeWithStoreInfo(EmployeeWithUserInfo):
+    """Schema for employee with store information"""
     store_name: Optional[str] = None

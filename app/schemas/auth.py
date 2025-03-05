@@ -1,35 +1,19 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 
-class UserBase(BaseModel):
+class LoginRequest(BaseModel):
+    """Schema for login request"""
     email: EmailStr
-    full_name: Optional[str] = None
-    role: str = "employee"
-    is_active: bool = True
-
-
-class UserCreate(UserBase):
     password: str
 
 
-class UserUpdate(UserBase):
-    password: Optional[str] = None
-
-
-class UserInDB(UserBase):
-    id: str
-    hashed_password: str
-
-
-class UserResponse(UserBase):
-    id: str
-
-
 class Token(BaseModel):
+    """Schema for authentication token"""
     access_token: str
     token_type: str
 
 
 class TokenPayload(BaseModel):
+    """Schema for token payload"""
     sub: Optional[str] = None

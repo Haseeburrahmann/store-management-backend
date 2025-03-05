@@ -1,52 +1,34 @@
+# app/schemas/user.py
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
-from bson import ObjectId
 
-
-# Custom type for handling ObjectId
-class PyObjectId(str):
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid ObjectId")
-        return str(v)
-
-    @classmethod
-    def __get_pydantic_core_schema__(cls, _source_type, _handler):
-        return {
-            "type": "string",
-            "description": "ObjectId"
-        }
-
-
-class UserBase(BaseModel):
+class UserCreate(BaseModel):
+    """Schema for creating users"""
     email: EmailStr
     full_name: str
+    password: str
     phone_number: Optional[str] = None
+    role_id: Optional[str] = None
     is_active: bool = True
 
-
-class UserCreate(UserBase):
-    password: str
-
-
 class UserUpdate(BaseModel):
+    """Schema for updating users"""
+    email: Optional[EmailStr] = None
     full_name: Optional[str] = None
     phone_number: Optional[str] = None
     password: Optional[str] = None
     role_id: Optional[str] = None
     is_active: Optional[bool] = None
 
-
-class UserInDB(UserBase):
+class UserResponse(BaseModel):
+    """Schema for user responses"""
     id: str = Field(..., alias="_id")
-    password: str
+    email: EmailStr
+    full_name: str
+    phone_number: Optional[str] = None
     role_id: Optional[str] = None
+    is_active: bool
     created_at: datetime
     updated_at: datetime
 
@@ -54,28 +36,16 @@ class UserInDB(UserBase):
         "populate_by_name": True,
         "arbitrary_types_allowed": True
     }
-
-
-class UserResponse(UserBase):
-    id: str = Field(..., alias="_id")
-    role_id: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {
-        "populate_by_name": True,
-        "arbitrary_types_allowed": True
-    }
-
 
 class UserWithPermissions(UserResponse):
+    """Schema for user with permissions"""
     permissions: List[str] = []
 
-
 class Token(BaseModel):
+    """Schema for authentication token"""
     access_token: str
     token_type: str
 
-
 class TokenPayload(BaseModel):
+    """Schema for token payload"""
     sub: Optional[str] = None
