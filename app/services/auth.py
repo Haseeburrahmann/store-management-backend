@@ -1,25 +1,25 @@
 from typing import Optional
 from datetime import timedelta
-from app.models.user import UserDB
 from bson import ObjectId
 
 from fastapi import HTTPException, status
 from app.core.security import verify_password, create_access_token
 from app.services.user import get_user_by_email, create_user
 from app.services.role import get_role_by_name
-from app.schemas.user import UserCreate, UserInDB
+from app.schemas.user import UserCreate, UserResponse
 from app.schemas.auth import Token
 from app.core.config import settings
+from app.models.user import UserModel
 
 
-async def authenticate_user(email: str, password: str) -> Optional[UserDB]:
+async def authenticate_user(email: str, password: str) -> Optional[dict]:
     """
     Authenticate a user
     """
     user = await get_user_by_email(email)
     if not user:
         return None
-    if not verify_password(password, user.password):
+    if not verify_password(password, user["password"]):
         return None
     return user
 
@@ -38,13 +38,13 @@ async def login_for_access_token(email: str, password: str) -> Token:
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        subject=str(user.id), expires_delta=access_token_expires
+        subject=str(user["_id"]), expires_delta=access_token_expires
     )
 
     return Token(access_token=access_token, token_type="bearer")
 
 
-async def register_new_user(user_data: UserCreate) -> UserInDB:
+async def register_new_user(user_data: UserCreate) -> dict:
     """
     Register a new user
     """
@@ -59,8 +59,8 @@ async def register_new_user(user_data: UserCreate) -> UserInDB:
     # By default, assign 'employee' role to new users
     employee_role = await get_role_by_name("Employee")
 
-    user_dict = user_data.dict()
+    user_dict = user_data.model_dump()
     if employee_role:
-        user_dict["role_id"] = employee_role.id
+        user_dict["role_id"] = employee_role["_id"]
 
     return await create_user(user_dict)

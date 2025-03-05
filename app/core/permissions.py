@@ -27,7 +27,7 @@ def get_permission_string(area: PermissionArea, action: PermissionAction) -> str
     """
     Generate a permission string in the format 'area:action'
     """
-    return f"{area}:{action}"
+    return f"{area.value}:{action.value}"
 
 
 # Predefined roles with their permissions

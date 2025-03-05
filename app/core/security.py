@@ -36,24 +36,51 @@ def get_password_hash(password: str) -> str:
 def check_permissions(user_permissions: List[str], required_permission: str) -> bool:
     """
     Check if a user has the required permission
+
+    Handles both formats:
+    - Simple format: "area:action" (e.g., "users:read")
+    - Full enum format: "PermissionArea.AREA:PermissionAction.ACTION"
     """
-    # Convert from "area:action" to "PermissionArea.AREA:PermissionAction.ACTION"
-    if ":" in required_permission:
+    # If the required permission is already in the full format, check directly
+    if required_permission in user_permissions:
+        return True
+
+    # If the required permission is in simple format, convert to full format
+    if ":" in required_permission and "PermissionArea" not in required_permission:
         area, action = required_permission.split(":")
         area_upper = area.upper()
         action_upper = action.upper()
 
-        # Try both singular and plural forms
-        if area_upper in ["STORE", "USER", "ROLE", "EMPLOYEE", "HOUR", "PAYMENT", "REPORT", "SALE"]:
-            plural_area = f"{area_upper}S"
-            full_permission_plural = f"PermissionArea.{plural_area}:PermissionAction.{action_upper}"
-            if full_permission_plural in user_permissions:
-                return True
-
-        # Standard format check
+        # Check with the full format
         full_permission = f"PermissionArea.{area_upper}:PermissionAction.{action_upper}"
         if full_permission in user_permissions:
             return True
 
-    # Direct check as fallback
-    return required_permission in user_permissions
+        # Handle potential singular/plural inconsistencies
+        if area_upper.endswith('S') and len(area_upper) > 1:
+            # Try singular form if plural was provided
+            singular_area = area_upper[:-1]
+            singular_permission = f"PermissionArea.{singular_area}:PermissionAction.{action_upper}"
+            if singular_permission in user_permissions:
+                return True
+        else:
+            # Try plural form if singular was provided
+            plural_permission = f"PermissionArea.{area_upper}S:PermissionAction.{action_upper}"
+            if plural_permission in user_permissions:
+                return True
+
+    # Convert the other way - check if a simplified version of a user permission matches the required permission
+    for permission in user_permissions:
+        if "PermissionArea." in permission and "PermissionAction." in permission:
+            # Extract the actual area and action
+            parts = permission.split(":")
+            if len(parts) == 2:
+                area_part = parts[0].replace("PermissionArea.", "").lower()
+                action_part = parts[1].replace("PermissionAction.", "").lower()
+                simple_permission = f"{area_part}:{action_part}"
+
+                if simple_permission == required_permission:
+                    return True
+
+    # No match found
+    return False

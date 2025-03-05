@@ -5,6 +5,12 @@ from app.core.config import settings
 # Create a MongoDB client
 client = AsyncIOMotorClient(settings.database_url)
 
-# Get database
+# Get database instance
+database = client[settings.database_name]
+
 def get_database():
-    return client[settings.database_name]
+    """
+    Get database connection
+    Returns MongoDB database instance
+    """
+    return database

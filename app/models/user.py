@@ -1,34 +1,16 @@
-from typing import Optional, List
-from pydantic import BaseModel, Field
+# app/models/user.py
+from typing import Optional
+from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from bson import ObjectId
-
-
-# Custom type for handling ObjectId
-class PyObjectId(str):
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid ObjectId")
-        return str(v)
-
-    @classmethod
-    def __get_pydantic_core_schema__(cls, _source_type, _handler):
-        return {
-            "type": "string",
-            "description": "ObjectId"
-        }
-
+from app.utils.object_id import PyObjectId
 
 class UserModel(BaseModel):
+    """Database model for users"""
     id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")
-    email: str
-    password: str
+    email: EmailStr
     full_name: str
+    password: str
     phone_number: Optional[str] = None
     role_id: Optional[str] = None
     is_active: bool = True
@@ -48,26 +30,3 @@ class UserModel(BaseModel):
             }
         }
     }
-
-
-class UserDB(UserModel):
-    """User model for database operations"""
-    pass
-
-
-class UserOut(BaseModel):
-    id: str = Field(..., alias="_id")
-    email: str
-    full_name: str
-    phone_number: Optional[str] = None
-    role_id: Optional[str] = None
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {
-        "populate_by_name": True,
-        "arbitrary_types_allowed": True
-    }
-
-
