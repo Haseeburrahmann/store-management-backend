@@ -1,7 +1,9 @@
-# app/schemas/store.py
+# app/schemas/store.py - Fixed StoreUpdate schema
+
 from typing import Optional
 from pydantic import BaseModel, Field, EmailStr
 from datetime import datetime
+
 
 class StoreCreate(BaseModel):
     """Schema for creating stores"""
@@ -15,6 +17,7 @@ class StoreCreate(BaseModel):
     manager_id: Optional[str] = None
     is_active: bool = True
 
+
 class StoreUpdate(BaseModel):
     """Schema for updating stores"""
     name: Optional[str] = None
@@ -26,6 +29,17 @@ class StoreUpdate(BaseModel):
     email: Optional[EmailStr] = None
     manager_id: Optional[str] = None
     is_active: Optional[bool] = None
+
+    class Config:
+        # Allow processing partial updates correctly
+        extra = "ignore"
+        json_schema_extra = {
+            "example": {
+                "city": "Chicago",
+                "is_active": True
+            }
+        }
+
 
 class StoreResponse(BaseModel):
     """Schema for store responses"""
@@ -46,6 +60,7 @@ class StoreResponse(BaseModel):
         "populate_by_name": True,
         "arbitrary_types_allowed": True
     }
+
 
 class StoreWithManager(StoreResponse):
     """Schema for store with manager details"""

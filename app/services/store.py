@@ -1,14 +1,17 @@
 # app/services/store.py
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from bson import ObjectId
-from app.core.db import get_database
+from datetime import datetime
+from fastapi import HTTPException, status
+
+from app.core.db import get_database, get_stores_collection
 from app.models.store import StoreModel
 from app.services.user import get_user_by_id
-from app.utils.formatting import format_object_ids
-from datetime import datetime
+from app.utils.formatting import format_object_ids, ensure_object_id
 
-# Get database connection once
+# Get database and collections
 db = get_database()
+stores_collection = get_stores_collection()
 
 
 class StoreService:
@@ -23,104 +26,210 @@ class StoreService:
         """
         Get all stores with optional filtering
         """
-        query = {}
+        try:
+            query = {}
 
-        if name:
-            query["name"] = {"$regex": name, "$options": "i"}
+            if name:
+                query["name"] = {"$regex": name, "$options": "i"}
 
-        if city:
-            query["city"] = {"$regex": city, "$options": "i"}
+            if city:
+                query["city"] = {"$regex": city, "$options": "i"}
 
-        if manager_id:
-            query["manager_id"] = manager_id
+            if manager_id:
+                # Try to convert to ObjectId if valid
+                manager_obj_id = ensure_object_id(manager_id)
+                if manager_obj_id:
+                    query["manager_id"] = manager_obj_id
+                else:
+                    query["manager_id"] = manager_id
 
-        stores = await db.stores.find(query).skip(skip).limit(limit).to_list(length=limit)
+            stores = await stores_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
 
-        # Add manager names if available
-        result = []
-        for store in stores:
-            store_with_manager = dict(store)
-            if store.get("manager_id"):
-                manager = await get_user_by_id(ObjectId(store["manager_id"]))
-                if manager:
-                    store_with_manager["manager_name"] = manager.get("full_name")
-            result.append(store_with_manager)
+            # Add manager names if available
+            result = []
+            for store in stores:
+                store_with_manager = dict(store)
+                if store.get("manager_id"):
+                    manager_obj_id = ensure_object_id(store["manager_id"])
+                    if manager_obj_id:
+                        manager = await get_user_by_id(manager_obj_id)
+                        if manager:
+                            store_with_manager["manager_name"] = manager.get("full_name")
+                result.append(store_with_manager)
 
-        return format_object_ids(result)
+            return format_object_ids(result)
+        except Exception as e:
+            print(f"Error getting stores: {str(e)}")
+            return []
 
     @staticmethod
     async def get_stores_by_manager(manager_id: str) -> List[dict]:
         """
         Get stores managed by a specific user
         """
-        stores = await db.stores.find({"manager_id": manager_id}).to_list(length=100)
-        return format_object_ids(stores)
+        try:
+            # Try with ObjectId
+            manager_obj_id = ensure_object_id(manager_id)
+
+            if manager_obj_id:
+                stores = await stores_collection.find({"manager_id": manager_obj_id}).to_list(length=100)
+            else:
+                # Try with string ID
+                stores = await stores_collection.find({"manager_id": manager_id}).to_list(length=100)
+
+                # Try string comparison if needed
+                if not stores:
+                    all_stores = await stores_collection.find().to_list(length=100)
+                    stores = [
+                        store for store in all_stores
+                        if str(store.get("manager_id")) == manager_id
+                    ]
+
+            return format_object_ids(stores)
+        except Exception as e:
+            print(f"Error getting stores by manager: {str(e)}")
+            return []
 
     @staticmethod
     async def get_store(store_id: str) -> Optional[dict]:
         """
-        Get store by ID with manager info
+        Get store by ID with robust error handling and diagnostics
         """
         try:
-            print(f"Attempting to find store with ID: {store_id}")
+            print(f"Looking up store with ID: {store_id}")
 
-            # List all stores for debugging
-            all_stores = await db.stores.find().to_list(length=100)
-            all_ids = [str(store.get('_id')) for store in all_stores]
-            print(f"All store IDs in database: {all_ids}")
+            # List all stores for debugging first
+            all_stores = await stores_collection.find().to_list(length=100)
+            store_ids = [str(s.get('_id')) for s in all_stores]
+            print(f"Found {len(all_stores)} stores in database")
+            print(f"Available store IDs: {store_ids}")
 
-            # Try with ObjectId
-            object_id = None
-            try:
-                object_id = ObjectId(store_id)
-                store = await db.stores.find_one({"_id": object_id})
-                print(f"Store lookup with ObjectId {object_id} result: {store is not None}")
-            except Exception as e:
-                print(f"Error looking up with ObjectId: {str(e)}")
-                store = None
+            # Multiple lookup strategies
 
-            # If not found with ObjectId, try string comparison
+            # 1. Try with ObjectId
+            store = None
+            obj_id = ensure_object_id(store_id)
+            if obj_id:
+                print(f"Trying lookup with ObjectId: {obj_id}")
+                store = await stores_collection.find_one({"_id": obj_id})
+                if store:
+                    print(f"Found store by ObjectId: {store.get('name')}")
+                else:
+                    print(f"No store found with ObjectId: {obj_id}")
+
+            # 2. Try with string ID directly
             if not store:
-                print("Trying string comparison...")
-                for db_store in all_stores:
-                    db_id = str(db_store.get('_id'))
-                    print(f"Comparing {db_id} with {store_id}: {db_id == store_id}")
-                    if db_id == store_id:
-                        store = db_store
-                        print(f"Found store by string comparison: {store.get('name')}")
+                print(f"Trying lookup with string ID: {store_id}")
+                store = await stores_collection.find_one({"_id": store_id})
+                if store:
+                    print(f"Found store by string ID: {store.get('name')}")
+                else:
+                    print(f"No store found with string ID: {store_id}")
+
+            # 3. Try string comparison as last resort
+            if not store:
+                print(f"Trying string comparison for ID: {store_id}")
+                for s in all_stores:
+                    if str(s.get('_id')) == store_id:
+                        store = s
+                        print(f"Found store via string comparison: {store.get('name')}")
                         break
 
+                if not store:
+                    print(f"No store found via string comparison")
+
+            # If we couldn't find the store with any method, return None
             if not store:
                 print(f"Store not found with ID: {store_id}")
                 return None
 
             # Get manager info if available
             if store and store.get("manager_id"):
-                manager = await get_user_by_id(ObjectId(store["manager_id"]))
+                print(f"Getting manager info for manager_id: {store.get('manager_id')}")
+                from app.services.user import get_user_by_id
+                manager = await get_user_by_id(store.get("manager_id"))
                 if manager:
+                    print(f"Found manager: {manager.get('full_name')}")
                     store_with_manager = dict(store)
                     store_with_manager["manager_name"] = manager.get("full_name")
                     return format_object_ids(store_with_manager)
+                else:
+                    print(f"Manager not found for ID: {store.get('manager_id')}")
 
+            # Return store without manager info if no manager found
+            print(f"Returning store without manager info: {store.get('name')}")
             return format_object_ids(store)
         except Exception as e:
             print(f"Error in get_store: {str(e)}")
+            # Return None instead of raising an exception to let the router handle the 404
             return None
 
     @staticmethod
     async def create_store(store_data: dict) -> dict:
         """
-        Create new store
+        Create new store with strict manager validation
         """
         try:
-            # Create store model
-            store_model = StoreModel(**store_data)
+            # Handle manager_id if provided
+            if "manager_id" in store_data and store_data["manager_id"]:
+                manager_id = store_data["manager_id"]
+                print(f"Validating manager ID: {manager_id}")
+
+                # Use the user service to find the manager
+                from app.services.user import get_user_by_id
+                manager = await get_user_by_id(manager_id)
+
+                if not manager:
+                    print(f"Manager not found with ID: {manager_id}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Manager with ID {manager_id} not found"
+                    )
+
+                # Validate manager has the Manager role
+                manager_role_id = manager.get("role_id")
+                if manager_role_id:
+                    from app.services.role import get_role_by_id
+                    role = await get_role_by_id(manager_role_id)
+
+                    if not role:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Role not found for user {manager.get('email')}"
+                        )
+
+                    if role.get("name") != "Manager" and role.get("name") != "Admin":
+                        print(f"User has role: {role.get('name')}, not Manager or Admin")
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"User {manager.get('email')} does not have Manager or Admin role"
+                        )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"User {manager.get('email')} does not have a role assigned"
+                    )
+
+                # Use string format of ID consistently
+                store_data["manager_id"] = str(manager.get('_id'))
+                print(f"Validated manager ID: {store_data['manager_id']}")
+
+            # Create store model - this will fail if the data doesn't match the model
+            try:
+                store_model = StoreModel(**store_data)
+            except Exception as e:
+                # Catch validation errors from the model
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid store data: {str(e)}"
+                )
 
             # Insert into database
-            result = await db.stores.insert_one(store_model.model_dump(by_alias=True))
+            result = await stores_collection.insert_one(store_model.model_dump(by_alias=True))
+            print(f"Store created with ID: {result.inserted_id}")
 
             # Get the created store
-            created_store = await db.stores.find_one({"_id": result.inserted_id})
+            created_store = await stores_collection.find_one({"_id": result.inserted_id})
             if not created_store:
                 print(f"Error: Store was inserted but could not be retrieved. ID: {result.inserted_id}")
                 return {
@@ -133,68 +242,108 @@ class StoreService:
             return format_object_ids(created_store)
         except Exception as e:
             print(f"Error creating store: {str(e)}")
-            raise
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error creating store: {str(e)}"
+            )
 
     @staticmethod
     async def update_store(store_id: str, store_data: dict) -> Optional[dict]:
         """
-        Update existing store
+        Update existing store with enhanced error handling
         """
         try:
-            print(f"Attempting to update store with ID: {store_id}")
-
-            # List all stores for debugging
-            all_stores = await db.stores.find().to_list(length=100)
-            all_ids = [str(store.get('_id')) for store in all_stores]
-            print(f"All store IDs in database: {all_ids}")
+            print(f"Updating store with ID: {store_id}")
+            print(f"Update data: {store_data}")
 
             # Update timestamp directly
             store_data["updated_at"] = datetime.utcnow()
 
             # Try with ObjectId
-            store_obj_id = None
-            try:
-                store_obj_id = ObjectId(store_id)
-                # Check if store exists first
-                store = await db.stores.find_one({"_id": store_obj_id})
-                if store:
-                    print(f"Found store with ObjectId: {store.get('name')}")
-                else:
-                    print(f"Store not found with ObjectId: {store_obj_id}")
-                    store = None
-            except Exception as e:
-                print(f"Error looking up with ObjectId: {str(e)}")
-                store = None
+            store_obj_id = ensure_object_id(store_id)
 
-            # If not found with ObjectId, try string comparison
-            if not store:
-                print("Trying string comparison...")
-                for db_store in all_stores:
-                    db_id = str(db_store.get('_id'))
-                    if db_id == store_id:
-                        store = db_store
-                        store_obj_id = db_store.get('_id')
-                        print(f"Found store by string comparison: {store.get('name')}")
+            # Get the existing store first to validate it exists
+            existing_store = None
+
+            if store_obj_id:
+                print(f"Looking up store with ObjectId: {store_obj_id}")
+                existing_store = await stores_collection.find_one({"_id": store_obj_id})
+                if existing_store:
+                    print(f"Found store with ObjectId: {existing_store.get('name')}")
+
+            # Try string lookup if ObjectId lookup failed
+            if not existing_store:
+                print(f"Looking up store with string ID: {store_id}")
+                existing_store = await stores_collection.find_one({"_id": store_id})
+                if existing_store:
+                    print(f"Found store with string ID: {existing_store.get('name')}")
+
+            # Try string comparison as last resort
+            if not existing_store:
+                print(f"Trying string comparison for store ID: {store_id}")
+                all_stores = await stores_collection.find().to_list(length=100)
+                for s in all_stores:
+                    if str(s.get('_id')) == store_id:
+                        existing_store = s
+                        print(f"Found store via string comparison: {existing_store.get('name')}")
                         break
 
-            if not store:
+            if not existing_store:
                 print(f"Store not found with ID: {store_id}")
                 return None
 
-            # Update the store using the found ObjectId
-            print(f"Updating store with ID: {store_obj_id}")
-            await db.stores.update_one(
-                {"_id": store_obj_id},
+            # If we're here, we found the store and can update it
+
+            # Handle manager_id validation for existing stores
+            # Skip manager validation if not changing manager
+            if "manager_id" in store_data:
+                manager_id = store_data["manager_id"]
+
+                if manager_id:
+                    # Validate manager exists
+                    from app.services.user import get_user_by_id
+                    manager = await get_user_by_id(manager_id)
+
+                    if not manager:
+                        print(f"Manager not found with ID: {manager_id}")
+                        raise Exception(f"Manager with ID {manager_id} not found")
+
+                    # Validate manager has correct role
+                    if manager.get("role_id"):
+                        from app.services.role import get_role_by_id
+                        role = await get_role_by_id(manager.get("role_id"))
+
+                        if role and role.get("name") != "Manager" and role.get("name") != "Admin":
+                            print(f"User has role: {role.get('name')}, not Manager or Admin")
+                            raise Exception(f"User {manager.get('email')} does not have Manager or Admin role")
+
+                    # Use string format of manager ID consistently
+                    store_data["manager_id"] = str(manager.get('_id'))
+
+            # Get the correct ID to use for update
+            update_id = existing_store.get('_id')
+            print(f"Using ID for update: {update_id}, type: {type(update_id)}")
+
+            # Update the store
+            update_result = await stores_collection.update_one(
+                {"_id": update_id},
                 {"$set": store_data}
             )
 
-            # Get the updated store
-            updated_store = await db.stores.find_one({"_id": store_obj_id})
-            if not updated_store:
-                print(f"Failed to retrieve updated store")
+            print(f"Update result: matched={update_result.matched_count}, modified={update_result.modified_count}")
+
+            if update_result.matched_count == 0:
+                print(f"No store matched for update")
                 return None
 
-            print(f"Successfully updated store: {updated_store.get('name')}")
+            # Get the updated store
+            updated_store = await stores_collection.find_one({"_id": update_id})
+            if not updated_store:
+                print(f"Unable to retrieve updated store")
+                return None
+
             return format_object_ids(updated_store)
         except Exception as e:
             print(f"Error updating store: {str(e)}")
@@ -206,48 +355,25 @@ class StoreService:
         Delete store
         """
         try:
-            print(f"Attempting to delete store with ID: {store_id}")
-
-            # List all stores for debugging
-            all_stores = await db.stores.find().to_list(length=100)
-            all_ids = [str(store.get('_id')) for store in all_stores]
-            print(f"All store IDs in database: {all_ids}")
-
-            # Try to convert the string ID to ObjectId
-            object_id = None
-            try:
-                object_id = ObjectId(store_id)
-                print(f"Converted to ObjectId: {object_id}")
-            except Exception as e:
-                print(f"Error converting to ObjectId: {str(e)}")
-                return False
-
-            # Check if store exists first
-            store = await db.stores.find_one({"_id": object_id})
-            if not store:
-                print(f"Store not found with ObjectId {object_id}")
-
-                # Try string comparison as fallback
-                found_store = None
-                for db_store in all_stores:
-                    if str(db_store.get('_id')) == store_id:
-                        found_store = db_store
-                        print(f"Found store by string comparison: {found_store.get('name')}")
-                        break
-
-                if found_store:
-                    # Delete using the original ObjectId
-                    result = await db.stores.delete_one({"_id": found_store.get('_id')})
-                    print(f"Delete result after string comparison: {result.deleted_count}")
+            # Try with ObjectId
+            store_obj_id = ensure_object_id(store_id)
+            if store_obj_id:
+                # Check if store exists first
+                store = await stores_collection.find_one({"_id": store_obj_id})
+                if store:
+                    # Delete the store
+                    result = await stores_collection.delete_one({"_id": store_obj_id})
                     return result.deleted_count > 0
-                else:
-                    print(f"Store not found with ID {store_id} after exhaustive search")
-                    return False
 
-            # Delete the store
-            result = await db.stores.delete_one({"_id": object_id})
-            print(f"Delete result: {result.deleted_count}")
-            return result.deleted_count > 0
+            # Try string comparison as fallback
+            all_stores = await stores_collection.find().to_list(length=100)
+            for store in all_stores:
+                if str(store.get('_id')) == store_id:
+                    # Delete using the original ObjectId
+                    result = await stores_collection.delete_one({"_id": store.get('_id')})
+                    return result.deleted_count > 0
+
+            return False
         except Exception as e:
             print(f"Error deleting store: {str(e)}")
             return False
@@ -258,60 +384,57 @@ class StoreService:
         Assign manager to store
         """
         try:
-            print(f"Attempting to assign manager {manager_id} to store {store_id}")
-
-            # List all users for debugging
-            all_users = await db.users.find().to_list(length=100)
-            all_user_ids = [str(user.get('_id')) for user in all_users]
-            print(f"All user IDs in database: {all_user_ids}")
-
-            # List all stores for debugging
-            all_stores = await db.stores.find().to_list(length=100)
-            all_store_ids = [str(store.get('_id')) for store in all_stores]
-            print(f"All store IDs in database: {all_store_ids}")
-
-            # Find the manager directly with string comparison
-            manager = None
-            for user in all_users:
-                if str(user.get('_id')) == manager_id:
-                    manager = user
-                    print(f"Found manager by string comparison: {user.get('full_name')}")
-                    break
-
-            if not manager:
-                print(f"Manager with ID {manager_id} not found")
-                return None
-
-            # Find the store directly with string comparison
-            store = None
-            for db_store in all_stores:
-                if str(db_store.get('_id')) == store_id:
-                    store = db_store
-                    print(f"Found store by string comparison: {store.get('name')}")
-                    break
+            # Validate store exists
+            store_obj_id = ensure_object_id(store_id)
+            if store_obj_id:
+                store = await stores_collection.find_one({"_id": store_obj_id})
+            else:
+                # Try string comparison
+                all_stores = await stores_collection.find().to_list(length=100)
+                store = None
+                for s in all_stores:
+                    if str(s.get('_id')) == store_id:
+                        store = s
+                        store_obj_id = s.get('_id')
+                        break
 
             if not store:
                 print(f"Store with ID {store_id} not found")
                 return None
 
-            # Update the store directly
-            store_obj_id = store.get('_id')
-            update_result = await db.stores.update_one(
+            # Validate manager exists
+            manager_obj_id = ensure_object_id(manager_id)
+            if manager_obj_id:
+                manager = await db.users.find_one({"_id": manager_obj_id})
+            else:
+                # Try string comparison
+                all_users = await db.users.find().to_list(length=100)
+                manager = None
+                for user in all_users:
+                    if str(user.get('_id')) == manager_id:
+                        manager = user
+                        manager_obj_id = user.get('_id')
+                        break
+
+            if not manager:
+                print(f"Manager with ID {manager_id} not found")
+                return None
+
+            # Update the store with manager ID (keep as string for consistency)
+            update_result = await stores_collection.update_one(
                 {"_id": store_obj_id},
                 {"$set": {
-                    "manager_id": manager_id,
+                    "manager_id": str(manager_obj_id),
                     "updated_at": datetime.utcnow()
                 }}
             )
-
-            print(f"Update result: {update_result.modified_count} documents modified")
 
             if update_result.modified_count == 0:
                 print("Store not updated")
                 return None
 
             # Get the updated store
-            updated_store = await db.stores.find_one({"_id": store_obj_id})
+            updated_store = await stores_collection.find_one({"_id": store_obj_id})
             if not updated_store:
                 print("Updated store not found")
                 return None
@@ -320,8 +443,31 @@ class StoreService:
             result = dict(updated_store)
             result["manager_name"] = manager.get("full_name")
 
-            print(f"Successfully assigned manager {manager.get('full_name')} to store {updated_store.get('name')}")
             return format_object_ids(result)
         except Exception as e:
             print(f"Error in assign_manager: {str(e)}")
             return None
+
+    @staticmethod
+    async def get_active_stores() -> List[dict]:
+        """
+        Get all active stores
+        """
+        try:
+            stores = await stores_collection.find({"is_active": True}).to_list(length=100)
+            return format_object_ids(stores)
+        except Exception as e:
+            print(f"Error getting active stores: {str(e)}")
+            return []
+
+    @staticmethod
+    async def check_store_exists(store_id: str) -> bool:
+        """
+        Check if a store exists
+        """
+        try:
+            store = await StoreService.get_store(store_id)
+            return store is not None
+        except Exception as e:
+            print(f"Error checking store existence: {str(e)}")
+            return False

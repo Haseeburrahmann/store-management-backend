@@ -1,8 +1,9 @@
+# app/schemas/hours.py
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, validator
-from bson import ObjectId
 from app.models.hours import HoursStatus
+
 
 class HourCreate(BaseModel):
     """Schema for creating hours records"""
@@ -16,6 +17,7 @@ class HourCreate(BaseModel):
 
     @validator('clock_out', 'break_start', 'break_end', pre=True)
     def validate_times(cls, v, values):
+        """Validate time fields have proper relationships"""
         if v is None:
             return v
 
@@ -29,8 +31,8 @@ class HourCreate(BaseModel):
                 except (ValueError, TypeError):
                     raise ValueError(f"Invalid datetime format: {v}")
 
-        # Compare datetimes
-        if 'clock_in' in values:
+        # Compare datetimes if clock_in is available
+        if 'clock_in' in values and values['clock_in'] is not None:
             clock_in = values['clock_in']
             # Convert clock_in to datetime if it's a string
             if isinstance(clock_in, str):
@@ -49,6 +51,7 @@ class HourCreate(BaseModel):
 
     @validator('break_end', pre=True)
     def validate_break_end(cls, v, values):
+        """Validate break_end comes after break_start"""
         if v is None or 'break_start' not in values or values['break_start'] is None:
             return v
 
@@ -78,6 +81,19 @@ class HourCreate(BaseModel):
 
         return v
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "employee_id": "60d21b4967d0d8992e610c85",
+                "store_id": "60d21b4967d0d8992e610c86",
+                "clock_in": "2023-06-01T09:00:00",
+                "clock_out": "2023-06-01T17:30:00",
+                "break_start": "2023-06-01T12:00:00",
+                "break_end": "2023-06-01T12:30:00",
+                "notes": "Regular shift"
+            }
+        }
+
 
 class HourUpdate(BaseModel):
     """Schema for updating hours records"""
@@ -88,6 +104,10 @@ class HourUpdate(BaseModel):
 
     @validator('clock_out', 'break_start', 'break_end', pre=True)
     def validate_times(cls, v, values, **kwargs):
+        """Convert string formats to datetime"""
+        if v is None:
+            return v
+
         # Convert string to datetime if needed
         if isinstance(v, str):
             try:
@@ -99,11 +119,40 @@ class HourUpdate(BaseModel):
                     raise ValueError(f"Invalid datetime format: {v}")
         return v
 
+    @validator('break_end')
+    def validate_break_end(cls, v, values):
+        """Validate break_end comes after break_start if both provided"""
+        if v is None or 'break_start' not in values or values['break_start'] is None:
+            return v
+
+        if v < values['break_start']:
+            raise ValueError('Break end must be after break start')
+
+        return v
+
+    class Config:
+        # Allow partial updates
+        extra = "ignore"
+        json_schema_extra = {
+            "example": {
+                "clock_out": "2023-06-01T17:30:00",
+                "notes": "Completed assigned tasks"
+            }
+        }
+
 
 class HourApproval(BaseModel):
     """Schema for approving hours records"""
     status: HoursStatus
     notes: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "approved",
+                "notes": "Hours verified and approved"
+            }
+        }
 
 
 class HourResponse(BaseModel):
@@ -116,7 +165,7 @@ class HourResponse(BaseModel):
     break_start: Optional[datetime] = None
     break_end: Optional[datetime] = None
     total_minutes: Optional[int] = None
-    status: HoursStatus = HoursStatus.PENDING
+    status: str
     approved_by: Optional[str] = None
     approved_at: Optional[datetime] = None
     notes: Optional[str] = None
@@ -153,6 +202,15 @@ class ClockInRequest(BaseModel):
     store_id: str
     notes: Optional[str] = None
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "employee_id": "60d21b4967d0d8992e610c85",
+                "store_id": "60d21b4967d0d8992e610c86",
+                "notes": "Morning shift"
+            }
+        }
+
 
 class ClockOutRequest(BaseModel):
     """Schema for clock out requests"""
@@ -162,6 +220,10 @@ class ClockOutRequest(BaseModel):
 
     @validator('break_start', 'break_end', pre=True)
     def validate_times(cls, v, values, **kwargs):
+        """Convert string formats to datetime"""
+        if v is None:
+            return v
+
         # Convert string to datetime if needed
         if isinstance(v, str):
             try:
@@ -172,3 +234,23 @@ class ClockOutRequest(BaseModel):
                 except (ValueError, TypeError):
                     raise ValueError(f"Invalid datetime format: {v}")
         return v
+
+    @validator('break_end')
+    def validate_break_end(cls, v, values):
+        """Validate break_end comes after break_start if both provided"""
+        if v is None or 'break_start' not in values or values['break_start'] is None:
+            return v
+
+        if v < values['break_start']:
+            raise ValueError('Break end must be after break start')
+
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "break_start": "2023-06-01T12:00:00",
+                "break_end": "2023-06-01T12:30:00",
+                "notes": "Completed assigned tasks"
+            }
+        }
