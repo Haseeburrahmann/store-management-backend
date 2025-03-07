@@ -1,44 +1,84 @@
 # app/services/role.py
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from bson import ObjectId
-from app.core.db import get_database
-from app.models.role import RoleModel
 from datetime import datetime
-from app.utils.formatting import format_object_ids
+from fastapi import HTTPException, status
 
-# Get database connection once when the module is loaded
+from app.core.db import get_database, get_roles_collection
+from app.models.role import RoleModel
+from app.core.permissions import DEFAULT_ROLES
+from app.utils.formatting import format_object_ids, ensure_object_id
+
+# Get database and collections
 db = get_database()
+roles_collection = get_roles_collection()
 
-async def get_roles(skip: int = 0, limit: int = 100, name: Optional[str] = None) -> List[dict]:
+
+async def get_roles(
+        skip: int = 0,
+        limit: int = 100,
+        name: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
     Get all roles with optional filtering
     """
-    query = {}
+    try:
+        query = {}
 
-    if name:
-        query["name"] = {"$regex": name, "$options": "i"}
+        if name:
+            query["name"] = {"$regex": name, "$options": "i"}
 
-    roles = await db.roles.find(query).skip(skip).limit(limit).to_list(length=limit)
-    return format_object_ids(roles)
+        roles = await roles_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
+        return format_object_ids(roles)
+    except Exception as e:
+        print(f"Error getting roles: {str(e)}")
+        return []
 
 
-async def get_role_by_id(role_id: str) -> Optional[dict]:
+async def get_role_by_id(role_id: Any) -> Optional[Dict[str, Any]]:
     """
-    Get role by ID
+    Get role by ID, with flexible ID format handling
     """
-    role = await db.roles.find_one({"_id": ObjectId(role_id)})
-    return format_object_ids(role) if role else None
+    try:
+        # Try with ObjectId
+        obj_id = ensure_object_id(role_id)
+        if obj_id:
+            role = await roles_collection.find_one({"_id": obj_id})
+            if role:
+                return format_object_ids(role)
+
+        # Try with string ID if ObjectId didn't work
+        if isinstance(role_id, str):
+            # Try direct string lookup
+            role = await roles_collection.find_one({"_id": role_id})
+            if role:
+                return format_object_ids(role)
+
+            # Try string comparison as last resort
+            all_roles = await roles_collection.find().to_list(length=100)
+            for r in all_roles:
+                if str(r.get("_id")) == role_id:
+                    return format_object_ids(r)
+
+        return None
+    except Exception as e:
+        print(f"Error getting role by ID: {str(e)}")
+        return None
 
 
-async def get_role_by_name(name: str) -> Optional[dict]:
+async def get_role_by_name(name: str) -> Optional[Dict[str, Any]]:
     """
     Get role by name
     """
-    role = await db.roles.find_one({"name": name})
-    return format_object_ids(role) if role else None
+    try:
+        role = await roles_collection.find_one({"name": name})
+        return format_object_ids(role) if role else None
+    except Exception as e:
+        print(f"Error getting role by name: {str(e)}")
+        return None
 
 
-async def create_role(role_data: dict) -> dict:
+async def create_role(role_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Create new role
     """
@@ -47,16 +87,11 @@ async def create_role(role_data: dict) -> dict:
         role_model = RoleModel(**role_data)
 
         # Insert into database
-        result = await db.roles.insert_one(role_model.model_dump(by_alias=True))
+        result = await roles_collection.insert_one(role_model.model_dump(by_alias=True))
 
         # Get the created role
-        created_role = await db.roles.find_one({"_id": result.inserted_id})
-
-        # Format and return
-        if created_role:
-            return format_object_ids(created_role)
-        else:
-            # Log error and return a meaningful response
+        created_role = await roles_collection.find_one({"_id": result.inserted_id})
+        if not created_role:
             print(f"Error: Role was inserted but could not be retrieved. ID: {result.inserted_id}")
             return {
                 "_id": str(result.inserted_id),
@@ -66,27 +101,58 @@ async def create_role(role_data: dict) -> dict:
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow()
             }
+
+        return format_object_ids(created_role)
     except Exception as e:
         print(f"Error creating role: {str(e)}")
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating role: {str(e)}"
+        )
 
 
-async def update_role(role_id: str, role_data: dict) -> Optional[dict]:
+async def update_role(role_id: str, role_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Update existing role
     """
-    # Update timestamp directly with datetime instead of using model
-    role_data["updated_at"] = datetime.utcnow()
+    try:
+        # Update timestamp
+        role_data["updated_at"] = datetime.utcnow()
 
-    # Update role
-    await db.roles.update_one(
-        {"_id": ObjectId(role_id)},
-        {"$set": role_data}
-    )
+        # Try with ObjectId
+        role_obj_id = ensure_object_id(role_id)
+        if role_obj_id:
+            # Check if role exists
+            role = await roles_collection.find_one({"_id": role_obj_id})
+            if role:
+                # Update role
+                await roles_collection.update_one(
+                    {"_id": role_obj_id},
+                    {"$set": role_data}
+                )
 
-    # Get updated role
-    updated_role = await get_role_by_id(role_id)
-    return updated_role
+                # Get updated role
+                updated_role = await get_role_by_id(role_obj_id)
+                return updated_role
+
+        # Try string comparison as fallback
+        all_roles = await roles_collection.find().to_list(length=100)
+        for role in all_roles:
+            if str(role.get("_id")) == role_id:
+                # Update role
+                await roles_collection.update_one(
+                    {"_id": role.get("_id")},
+                    {"$set": role_data}
+                )
+
+                # Get updated role
+                updated_role = await get_role_by_id(role.get("_id"))
+                return updated_role
+
+        return None
+    except Exception as e:
+        print(f"Error updating role: {str(e)}")
+        return None
 
 
 async def delete_role(role_id: str) -> bool:
@@ -94,41 +160,51 @@ async def delete_role(role_id: str) -> bool:
     Delete role
     """
     try:
-        print(f"Attempting to delete role with ID: {role_id}")
+        # Try with ObjectId
+        role_obj_id = ensure_object_id(role_id)
+        if role_obj_id:
+            # Check if role exists
+            role = await roles_collection.find_one({"_id": role_obj_id})
+            if role:
+                # Check if it's a default role
+                role_name = role.get("name")
+                for default_role in DEFAULT_ROLES.values():
+                    if default_role["name"] == role_name:
+                        # Don't delete default roles
+                        print(f"Cannot delete default role: {role_name}")
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Cannot delete default role: {role_name}"
+                        )
 
-        # Look up all roles first to debug
-        all_roles = await db.roles.find().to_list(length=100)
-        all_ids = [str(role.get('_id')) for role in all_roles]
-        print(f"All role IDs in database: {all_ids}")
+                # Delete role
+                result = await roles_collection.delete_one({"_id": role_obj_id})
+                return result.deleted_count > 0
 
-        # Try to convert the string ID to ObjectId
-        try:
-            object_id = ObjectId(role_id)
-            # First attempt with ObjectId
-            role = await db.roles.find_one({"_id": object_id})
-        except Exception as e:
-            print(f"Error converting to ObjectId: {str(e)}")
-            role = None
+        # Try string comparison as fallback
+        all_roles = await roles_collection.find().to_list(length=100)
+        for role in all_roles:
+            if str(role.get("_id")) == role_id:
+                # Check if it's a default role
+                role_name = role.get("name")
+                for default_role in DEFAULT_ROLES.values():
+                    if default_role["name"] == role_name:
+                        # Don't delete default roles
+                        print(f"Cannot delete default role: {role_name}")
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Cannot delete default role: {role_name}"
+                        )
 
-        # If not found with ObjectId, try with string
-        if not role:
-            # Try to find by string comparison
-            for db_role in all_roles:
-                if str(db_role.get('_id')) == role_id:
-                    # Found a match by string comparison
-                    print(f"Found role by string comparison: {db_role.get('name')}")
-                    result = await db.roles.delete_one({"_id": db_role.get('_id')})
-                    return result.deleted_count > 0
+                # Delete role
+                result = await roles_collection.delete_one({"_id": role.get("_id")})
+                return result.deleted_count > 0
 
-            print(f"Role not found with ID: {role_id}")
-            return False
-        else:
-            # Role was found with ObjectId
-            result = await db.roles.delete_one({"_id": object_id})
-            return result.deleted_count > 0
-
+        return False
     except Exception as e:
         print(f"Error deleting role: {str(e)}")
+        if isinstance(e, HTTPException):
+            raise e
         return False
 
 
@@ -136,9 +212,75 @@ async def create_default_roles() -> None:
     """
     Create default roles if they don't exist
     """
-    from app.core.permissions import DEFAULT_ROLES
+    try:
+        for role_key, role_data in DEFAULT_ROLES.items():
+            # Check if role already exists
+            existing_role = await get_role_by_name(role_data["name"])
+            if not existing_role:
+                print(f"Creating default role: {role_data['name']}")
+                await create_role(role_data)
+            else:
+                # Update permissions if needed to ensure they match the defaults
+                current_permissions = set(existing_role.get("permissions", []))
+                default_permissions = set(role_data["permissions"])
 
-    for role_key, role_data in DEFAULT_ROLES.items():
-        existing_role = await get_role_by_name(role_data["name"])
-        if not existing_role:
-            await create_role(role_data)
+                if current_permissions != default_permissions:
+                    print(f"Updating permissions for role: {role_data['name']}")
+                    await update_role(
+                        str(existing_role["_id"]),
+                        {"permissions": role_data["permissions"]}
+                    )
+    except Exception as e:
+        print(f"Error creating default roles: {str(e)}")
+
+
+async def get_role_with_permissions(role_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get role with formatted permissions
+    """
+    try:
+        role = await get_role_by_id(role_id)
+        if not role:
+            return None
+
+        # Format permissions for easier checking
+        permissions = role.get("permissions", [])
+
+        # Group permissions by area
+        permission_groups = {}
+        for permission in permissions:
+            if ":" in permission:
+                area, action = permission.split(":")
+                if area not in permission_groups:
+                    permission_groups[area] = []
+                permission_groups[area].append(action)
+
+        role["permission_groups"] = permission_groups
+        return role
+    except Exception as e:
+        print(f"Error getting role with permissions: {str(e)}")
+        return None
+
+
+async def check_user_has_permission(user_id: str, required_permission: str) -> bool:
+    """
+    Check if a user has the required permission
+    """
+    try:
+        # Get user
+        from app.services.user import get_user_by_id
+        user = await get_user_by_id(user_id)
+        if not user or not user.get("role_id"):
+            return False
+
+        # Get role
+        role = await get_role_by_id(user["role_id"])
+        if not role:
+            return False
+
+        # Check permission
+        from app.core.security import check_permissions
+        return check_permissions(role.get("permissions", []), required_permission)
+    except Exception as e:
+        print(f"Error checking user permission: {str(e)}")
+        return False

@@ -1,13 +1,14 @@
 # app/dependencies/permissions.py
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Callable
 from fastapi import Depends, HTTPException, status
 from jose import jwt, JWTError
 from pydantic import ValidationError
+
 from app.core.config import settings
 from app.core.security import oauth2_scheme, check_permissions
 from app.services.user import get_user_by_id
 from app.services.role import get_role_by_id
-from bson import ObjectId
+from app.utils.formatting import ensure_object_id
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
@@ -30,7 +31,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any
     except (JWTError, ValidationError):
         raise credentials_exception
 
-    user = await get_user_by_id(ObjectId(user_id))
+    user = await get_user_by_id(user_id)
     if user is None:
         raise credentials_exception
 
@@ -55,26 +56,23 @@ async def get_user_permissions(user: Dict[str, Any]) -> List[str]:
     if not user.get("role_id"):
         return []
 
-    role = await get_role_by_id(user["role_id"])
+    role_id = user.get("role_id")
+    role = await get_role_by_id(role_id)
     if not role:
         return []
 
     return role.get("permissions", [])
 
 
-def has_permission(required_permission: str):
+def has_permission(required_permission: str) -> Callable:
     """
     Dependency to check if the current user has the required permission
     """
 
     async def permission_checker(
             current_user: Dict[str, Any] = Depends(get_current_active_user)
-    ):
+    ) -> Dict[str, Any]:
         user_permissions = await get_user_permissions(current_user)
-
-        # Debug prints
-        print(f"User permissions: {user_permissions}")
-        print(f"Required permission: {required_permission}")
 
         if not check_permissions(user_permissions, required_permission):
             raise HTTPException(
@@ -85,3 +83,79 @@ def has_permission(required_permission: str):
         return current_user
 
     return permission_checker
+
+
+def has_store_permission(required_permission: str, store_id_param: str = "store_id") -> Callable:
+    """
+    Dependency to check if the current user has the required permission for a specific store
+    """
+
+    async def store_permission_checker(
+            store_id: str,
+            current_user: Dict[str, Any] = Depends(get_current_active_user)
+    ) -> Dict[str, Any]:
+        # Get user permissions
+        user_permissions = await get_user_permissions(current_user)
+
+        # Check if user has admin-level permission for this action
+        if check_permissions(user_permissions, required_permission):
+            return current_user
+
+        # Check if user is a manager of this specific store
+        from app.services.store import StoreService
+        store = await StoreService.get_store(store_id)
+
+        if store and store.get("manager_id") and str(store.get("manager_id")) == str(current_user.get("_id")):
+            # Manager has access to their own store
+            return current_user
+
+        # User doesn't have permission for this store
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Not enough permissions for store {store_id}",
+        )
+
+    return store_permission_checker
+
+
+def has_employee_permission(required_permission: str) -> Callable:
+    """
+    Dependency to check if the current user has the required permission for an employee
+    This allows managers to access their store's employees
+    """
+
+    async def employee_permission_checker(
+            employee_id: str,
+            current_user: Dict[str, Any] = Depends(get_current_active_user)
+    ) -> Dict[str, Any]:
+        # Get user permissions
+        user_permissions = await get_user_permissions(current_user)
+
+        # Check if user has admin-level permission for this action
+        if check_permissions(user_permissions, required_permission):
+            return current_user
+
+        # Check if current user is this employee
+        from app.services.employee import EmployeeService
+        employee = await EmployeeService.get_employee(employee_id)
+
+        if employee and employee.get("user_id") and str(employee.get("user_id")) == str(current_user.get("_id")):
+            # Employee has access to their own data
+            return current_user
+
+        # Check if user is a manager of this employee's store
+        if employee and employee.get("store_id"):
+            from app.services.store import StoreService
+            store = await StoreService.get_store(employee.get("store_id"))
+
+            if store and store.get("manager_id") and str(store.get("manager_id")) == str(current_user.get("_id")):
+                # Manager has access to employees in their store
+                return current_user
+
+        # User doesn't have permission for this employee
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Not enough permissions for employee {employee_id}",
+        )
+
+    return employee_permission_checker
