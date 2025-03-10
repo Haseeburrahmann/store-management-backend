@@ -14,6 +14,8 @@ class PermissionArea(str, Enum):
     STOCK_REQUESTS = "stock_requests"
     SALES = "sales"
     REPORTS = "reports"
+    SCHEDULES = "schedules"  # Add this if it's missing
+    TIMESHEETS = "timesheets"  # Add this if it's missing
 
 
 class PermissionAction(str, Enum):
@@ -73,6 +75,12 @@ DEFAULT_ROLES = {
             get_permission_string(PermissionArea.SALES, PermissionAction.READ),
             get_permission_string(PermissionArea.SALES, PermissionAction.WRITE),
             get_permission_string(PermissionArea.REPORTS, PermissionAction.READ),
+
+            # hours - tracking
+            get_permission_string(PermissionArea.STORES, PermissionAction.READ),
+            get_permission_string(PermissionArea.STORES, PermissionAction.WRITE),
+            get_permission_string(PermissionArea.SCHEDULES, PermissionAction.READ),
+            get_permission_string(PermissionArea.SCHEDULES, PermissionAction.WRITE),
         ]
     },
     "employee": {
@@ -100,6 +108,12 @@ DEFAULT_ROLES = {
             # Sales - can record
             get_permission_string(PermissionArea.SALES, PermissionAction.WRITE),
             get_permission_string(PermissionArea.SALES, PermissionAction.READ),
+
+            #hours - tracking
+            get_permission_string(PermissionArea.STORES, PermissionAction.READ),
+            get_permission_string(PermissionArea.SCHEDULES, PermissionAction.READ),
+
+            get_permission_string(PermissionArea.EMPLOYEES, PermissionAction.READ),
         ]
     }
 }

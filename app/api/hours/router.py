@@ -1,6 +1,6 @@
 # app/api/hours/router.py
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from datetime import datetime, date
 from app.dependencies.permissions import get_current_user, has_permission
 from app.schemas.hours import HourCreate, HourUpdate, HourResponse, HourWithEmployee, HourApproval, ClockInRequest, \
@@ -9,6 +9,7 @@ from app.services.hours import HourService
 from app.services.employee import EmployeeService
 from app.services.store import StoreService
 from app.core.db import get_hours_collection
+from fastapi import status
 
 router = APIRouter()
 hours_collection = get_hours_collection()
