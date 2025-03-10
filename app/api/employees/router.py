@@ -9,6 +9,7 @@ from app.schemas.employee import EmployeeUpdate, EmployeeResponse, EmployeeWithU
 from app.services.employee import EmployeeService
 from app.services.store import StoreService
 from app.services.user import get_user_by_id
+from app.utils.id_handler import IdHandler
 
 router = APIRouter()
 
@@ -75,11 +76,14 @@ async def get_employee(
     """
     print(f"Getting employee with ID: {employee_id}")
     employee = await EmployeeService.get_employee(employee_id)
-    if not employee:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Employee with ID {employee_id} not found"
-        )
+
+    # Use the helper method to raise a consistent 404 error if not found
+    IdHandler.raise_if_not_found(
+        employee,
+        f"Employee with ID {employee_id} not found",
+        status.HTTP_404_NOT_FOUND
+    )
+
     return employee
 
 

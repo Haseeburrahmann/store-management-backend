@@ -8,6 +8,7 @@ from app.core.db import get_database, get_hours_collection, get_employees_collec
 from app.models.hours import HoursStatus
 from app.schemas.hours import HourCreate, HourUpdate, HourApproval, TimeSheetSummary
 from app.utils.formatting import format_object_ids, ensure_object_id
+from app.utils.id_handler import IdHandler
 
 # Get database and collections
 db = get_database()
@@ -135,45 +136,17 @@ class HourService:
     @staticmethod
     async def get_hour(hour_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get hour record by ID with enhanced lookup strategies
+        Get hour record by ID using the centralized ID handler
         """
         try:
             print(f"Looking up hour record with ID: {hour_id}")
 
-            # Multiple lookup strategies
-            hour = None
-
-            # 1. Try with ObjectId
-            obj_id = ensure_object_id(hour_id)
-            if obj_id:
-                print(f"Trying lookup with ObjectId: {obj_id}")
-                hour = await hours_collection.find_one({"_id": obj_id})
-                if hour:
-                    print(f"Found hour record with ObjectId lookup")
-                else:
-                    print(f"No hour record found with ObjectId lookup")
-
-            # 2. Try with string ID
-            if not hour:
-                print(f"Trying direct string lookup: {hour_id}")
-                hour = await hours_collection.find_one({"_id": hour_id})
-                if hour:
-                    print(f"Found hour record with string ID lookup")
-                else:
-                    print(f"No hour record found with string ID lookup")
-
-            # 3. Try string comparison
-            if not hour:
-                print("Trying string comparison for hour record...")
-                all_hours = await hours_collection.find().to_list(length=100)
-                for h in all_hours:
-                    if str(h.get('_id')) == hour_id:
-                        hour = h
-                        print(f"Found hour record by string comparison")
-                        break
-
-                if not hour:
-                    print(f"No hour record found via string comparison")
+            # Use centralized method for consistent lookup
+            hour, _ = await IdHandler.find_document_by_id(
+                hours_collection,
+                hour_id,
+                not_found_msg=f"Hour record with ID {hour_id} not found"
+            )
 
             if not hour:
                 print(f"Hour record not found with ID: {hour_id}")
@@ -208,7 +181,7 @@ class HourService:
                 else:
                     print(f"Store not found for ID: {hour.get('store_id')}")
 
-            return format_object_ids(hour_with_info)
+            return IdHandler.format_object_ids(hour_with_info)
         except Exception as e:
             print(f"Error getting hour record: {str(e)}")
             return None
