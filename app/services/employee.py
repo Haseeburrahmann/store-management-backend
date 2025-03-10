@@ -9,6 +9,7 @@ from app.models.employee import EmployeeModel
 from app.services.user import get_user_by_id
 from app.services.store import StoreService
 from app.utils.formatting import format_object_ids, ensure_object_id
+from app.utils.id_handler import IdHandler
 
 # Get database and collections
 db = get_database()
@@ -35,10 +36,14 @@ class EmployeeService:
                 query["position"] = {"$regex": position, "$options": "i"}
 
             if store_id:
-                # Try to convert to ObjectId if valid
+                # Try with both string and ObjectId formats for maximum compatibility
                 store_obj_id = ensure_object_id(store_id)
                 if store_obj_id:
-                    query["store_id"] = store_obj_id
+                    # Use $or to try both formats
+                    query["$or"] = [
+                        {"store_id": store_obj_id},
+                        {"store_id": store_id}
+                    ]
                 else:
                     query["store_id"] = store_id
 
@@ -84,46 +89,17 @@ class EmployeeService:
     @staticmethod
     async def get_employee(employee_id: str) -> Optional[dict]:
         """
-        Get employee by ID with enhanced error handling and lookup strategies
+        Get employee by ID using the centralized ID handler
         """
         try:
             print(f"Looking up employee with ID: {employee_id}")
 
-            # List all employees for debugging
-            all_employees = await employees_collection.find().to_list(length=100)
-            employee_ids = [str(emp.get('_id')) for emp in all_employees]
-            print(f"Found {len(all_employees)} employees in database")
-
-            # Multiple lookup strategies
-            employee = None
-
-            # 1. Try with ObjectId
-            obj_id = ensure_object_id(employee_id)
-            if obj_id:
-                print(f"Trying lookup with ObjectId: {obj_id}")
-                employee = await employees_collection.find_one({"_id": obj_id})
-                if employee:
-                    print(f"Found employee with ObjectId lookup")
-                else:
-                    print(f"No employee found with ObjectId lookup")
-
-            # 2. Try with string ID
-            if not employee:
-                print(f"Trying direct string lookup: {employee_id}")
-                employee = await employees_collection.find_one({"_id": employee_id})
-                if employee:
-                    print(f"Found employee with string ID lookup")
-                else:
-                    print(f"No employee found with string ID lookup")
-
-            # 3. Try string comparison
-            if not employee:
-                print("Trying string comparison for employee...")
-                for emp in all_employees:
-                    if str(emp.get('_id')) == employee_id:
-                        employee = emp
-                        print(f"Found employee by string comparison")
-                        break
+            # Use centralized method for consistent lookup
+            employee, _ = await IdHandler.find_document_by_id(
+                employees_collection,
+                employee_id,
+                not_found_msg=f"Employee with ID {employee_id} not found"
+            )
 
             if not employee:
                 print(f"Employee not found with ID: {employee_id}")
@@ -154,7 +130,7 @@ class EmployeeService:
                 else:
                     print(f"Store not found for ID: {employee.get('store_id')}")
 
-            return format_object_ids(employee_with_info)
+            return IdHandler.format_object_ids(employee_with_info)
         except Exception as e:
             print(f"Error getting employee: {str(e)}")
             return None

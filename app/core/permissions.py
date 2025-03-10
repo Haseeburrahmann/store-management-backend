@@ -81,6 +81,7 @@ DEFAULT_ROLES = {
         "permissions": [
             # Read-only access to own profile
             get_permission_string(PermissionArea.USERS, PermissionAction.READ),
+            get_permission_string(PermissionArea.USERS, PermissionAction.WRITE),
 
             # Limited access to hours (clock in/out)
             get_permission_string(PermissionArea.HOURS, PermissionAction.READ),

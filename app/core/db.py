@@ -1,4 +1,4 @@
-# app/core/db.py
+# app/core/db.py - Update to include schedule and timesheet collections
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.core.config import settings
 
@@ -30,5 +30,11 @@ def get_employees_collection():
 
 def get_hours_collection():
     return database.hours
+
+def get_schedules_collection():
+    return database.schedules
+
+def get_timesheets_collection():
+    return database.timesheets
 
 # Future collections can be added here

@@ -8,6 +8,7 @@ from app.core.db import get_database, get_users_collection
 from app.models.user import UserModel
 from app.core.security import get_password_hash, verify_password
 from app.utils.formatting import format_object_ids, ensure_object_id
+from app.utils.id_handler import IdHandler
 
 # Get database and collections
 db = get_database()
@@ -30,15 +31,21 @@ async def get_users(
             query["email"] = {"$regex": email, "$options": "i"}
 
         if role_id:
-            # Try to convert to ObjectId if valid
-            role_obj_id = ensure_object_id(role_id)
-            if role_obj_id:
-                query["role_id"] = role_obj_id
-            else:
-                query["role_id"] = role_id
+            # Since role_id is stored as a string in the database,
+            # use string comparison directly
+            query["role_id"] = role_id
+
+            # Log the query for debugging
+            print(f"Querying users with role_id: {role_id}")
+            print(f"Final query: {query}")
 
         users = await users_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
-        return format_object_ids(users)
+        formatted_users = format_object_ids(users)
+
+        # Log results for debugging
+        print(f"Found {len(formatted_users)} users matching query")
+
+        return formatted_users
     except Exception as e:
         print(f"Error getting users: {str(e)}")
         return []
@@ -46,57 +53,24 @@ async def get_users(
 
 async def get_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
     """
-    Enhanced get_user_by_id with advanced ID handling and debugging
+    Get user by ID using the centralized ID handler
     """
     try:
         print(f"Looking up user with ID: {user_id}, type: {type(user_id)}")
 
-        # Handle various ID types
-        obj_id = None
-        if isinstance(user_id, ObjectId):
-            obj_id = user_id
-            print(f"ID is already an ObjectId: {obj_id}")
-        elif isinstance(user_id, str) and ObjectId.is_valid(user_id):
-            obj_id = ObjectId(user_id)
-            print(f"Converted to ObjectId: {obj_id}")
-        else:
-            print(f"ID is not a valid ObjectId format: {user_id}")
+        # Use centralized method for consistent lookup
+        user, _ = await IdHandler.find_document_by_id(
+            users_collection,
+            user_id,
+            not_found_msg=f"User with ID {user_id} not found"
+        )
 
-        # Try lookup with ObjectId if we have one
-        if obj_id:
-            print(f"Trying lookup with ObjectId: {obj_id}")
-            user = await users_collection.find_one({"_id": obj_id})
-            if user:
-                print(f"Found user with ObjectId lookup: {user.get('email', 'unknown')}")
-                return format_object_ids(user)
-            else:
-                print(f"No user found with ObjectId: {obj_id}")
+        if not user:
+            print(f"User not found with ID: {user_id}")
+            return None
 
-        # Try string ID lookup if we have a string
-        if isinstance(user_id, str):
-            # Try direct string lookup
-            print(f"Trying direct string lookup: {user_id}")
-            user = await users_collection.find_one({"_id": user_id})
-            if user:
-                print(f"Found user with string ID lookup: {user.get('email', 'unknown')}")
-                return format_object_ids(user)
-            else:
-                print(f"No user found with string ID: {user_id}")
-
-            # If we have a valid ObjectId string but lookup failed, try string comparison
-            if ObjectId.is_valid(user_id):
-                print(f"Trying string comparison for ObjectId: {user_id}")
-                all_users = await users_collection.find().to_list(length=100)
-                for u in all_users:
-                    if str(u.get("_id")) == user_id:
-                        print(f"Found user via string comparison: {u.get('email', 'unknown')}")
-                        return format_object_ids(u)
-
-                print(f"No user found via string comparison")
-
-        # If we reach here, no user was found
-        print(f"User not found with ID: {user_id}")
-        return None
+        print(f"Found user with email: {user.get('email', 'unknown')}")
+        return IdHandler.format_object_ids(user)
     except Exception as e:
         print(f"Error getting user by ID: {str(e)}")
         return None

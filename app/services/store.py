@@ -8,6 +8,7 @@ from app.core.db import get_database, get_stores_collection
 from app.models.store import StoreModel
 from app.services.user import get_user_by_id
 from app.utils.formatting import format_object_ids, ensure_object_id
+from app.utils.id_handler import IdHandler
 
 # Get database and collections
 db = get_database()
@@ -93,52 +94,18 @@ class StoreService:
     @staticmethod
     async def get_store(store_id: str) -> Optional[dict]:
         """
-        Get store by ID with robust error handling and diagnostics
+        Get store by ID using the centralized ID handler
         """
         try:
             print(f"Looking up store with ID: {store_id}")
 
-            # List all stores for debugging first
-            all_stores = await stores_collection.find().to_list(length=100)
-            store_ids = [str(s.get('_id')) for s in all_stores]
-            print(f"Found {len(all_stores)} stores in database")
-            print(f"Available store IDs: {store_ids}")
+            # Use centralized method for consistent lookup
+            store, _ = await IdHandler.find_document_by_id(
+                stores_collection,
+                store_id,
+                not_found_msg=f"Store with ID {store_id} not found"
+            )
 
-            # Multiple lookup strategies
-
-            # 1. Try with ObjectId
-            store = None
-            obj_id = ensure_object_id(store_id)
-            if obj_id:
-                print(f"Trying lookup with ObjectId: {obj_id}")
-                store = await stores_collection.find_one({"_id": obj_id})
-                if store:
-                    print(f"Found store by ObjectId: {store.get('name')}")
-                else:
-                    print(f"No store found with ObjectId: {obj_id}")
-
-            # 2. Try with string ID directly
-            if not store:
-                print(f"Trying lookup with string ID: {store_id}")
-                store = await stores_collection.find_one({"_id": store_id})
-                if store:
-                    print(f"Found store by string ID: {store.get('name')}")
-                else:
-                    print(f"No store found with string ID: {store_id}")
-
-            # 3. Try string comparison as last resort
-            if not store:
-                print(f"Trying string comparison for ID: {store_id}")
-                for s in all_stores:
-                    if str(s.get('_id')) == store_id:
-                        store = s
-                        print(f"Found store via string comparison: {store.get('name')}")
-                        break
-
-                if not store:
-                    print(f"No store found via string comparison")
-
-            # If we couldn't find the store with any method, return None
             if not store:
                 print(f"Store not found with ID: {store_id}")
                 return None
@@ -152,13 +119,13 @@ class StoreService:
                     print(f"Found manager: {manager.get('full_name')}")
                     store_with_manager = dict(store)
                     store_with_manager["manager_name"] = manager.get("full_name")
-                    return format_object_ids(store_with_manager)
+                    return IdHandler.format_object_ids(store_with_manager)
                 else:
                     print(f"Manager not found for ID: {store.get('manager_id')}")
 
             # Return store without manager info if no manager found
             print(f"Returning store without manager info: {store.get('name')}")
-            return format_object_ids(store)
+            return IdHandler.format_object_ids(store)
         except Exception as e:
             print(f"Error in get_store: {str(e)}")
             # Return None instead of raising an exception to let the router handle the 404
