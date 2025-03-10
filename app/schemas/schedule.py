@@ -55,7 +55,9 @@ class ScheduleShiftUpdate(BaseModel):
 
 class ScheduleShiftResponse(BaseModel):
     """Schema for schedule shift responses"""
-    id: str = Field(..., alias="_id")
+    # Fix for the "_id is required" error:
+    # Make ID field have a default value if it's missing
+    id: str = Field(default_factory=lambda: str(datetime.now().timestamp()), alias="_id")
     employee_id: str
     date: str  # ISO date string YYYY-MM-DD
     start_time: str  # Time in format HH:MM (24-hour)
