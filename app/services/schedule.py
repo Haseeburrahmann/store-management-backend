@@ -5,7 +5,6 @@ from bson import ObjectId
 from fastapi import HTTPException, status
 
 from app.core.db import get_database, get_schedules_collection, get_employees_collection, get_stores_collection
-from app.utils.formatting import format_object_ids, ensure_object_id
 from app.utils.id_handler import IdHandler
 
 # Get database and collections
@@ -26,22 +25,13 @@ class ScheduleService:
             end_date: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Get all schedules with optional filtering
+        Get all schedules with standardized ID handling
         """
         try:
             query = {}
 
             if store_id:
-                # Try with both string and ObjectId formats for maximum compatibility
-                store_obj_id = ensure_object_id(store_id)
-                if store_obj_id:
-                    # Use $or to try both formats
-                    query["$or"] = [
-                        {"store_id": store_obj_id},
-                        {"store_id": store_id}
-                    ]
-                else:
-                    query["store_id"] = store_id
+                query["store_id"] = store_id
 
             if start_date:
                 if "end_date" in query:
@@ -55,30 +45,18 @@ class ScheduleService:
                 else:
                     query["start_date"] = {"$lte": end_date}
 
-            # Filtering by employee ID is more complex since employees are in the shifts array
-            employee_filter = None
-            if employee_id:
-                employee_obj_id = ensure_object_id(employee_id)
-                if employee_obj_id:
-                    employee_filter = {"shifts.employee_id": employee_obj_id}
-                else:
-                    employee_filter = {"shifts.employee_id": employee_id}
-
             # First get the schedules based on main filters
             schedules = await schedules_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
 
             # Then filter by employee ID if needed
-            if employee_filter and schedules:
+            if employee_id and schedules:
                 filtered_schedules = []
                 for schedule in schedules:
                     # Check if any shift has this employee
                     if "shifts" in schedule:
                         for shift in schedule.get("shifts", []):
                             shift_emp_id = shift.get("employee_id")
-                            if (isinstance(shift_emp_id,
-                                           ObjectId) and employee_obj_id and shift_emp_id == employee_obj_id) or \
-                                    (isinstance(shift_emp_id, str) and shift_emp_id == employee_id) or \
-                                    (str(shift_emp_id) == employee_id):
+                            if IdHandler.id_to_str(shift_emp_id) == IdHandler.id_to_str(employee_id):
                                 filtered_schedules.append(schedule)
                                 break
                 schedules = filtered_schedules
@@ -88,9 +66,14 @@ class ScheduleService:
             for schedule in schedules:
                 schedule_with_info = dict(schedule)
 
-                # Add store info
+                # Add store info using centralized ID handler
                 if schedule.get("store_id"):
-                    store = await stores_collection.find_one({"_id": schedule.get("store_id")})
+                    store, _ = await IdHandler.find_document_by_id(
+                        stores_collection,
+                        schedule.get("store_id"),
+                        not_found_msg=f"Store not found for ID: {schedule.get('store_id')}"
+                    )
+
                     if store:
                         schedule_with_info["store_name"] = store.get("name")
 
@@ -99,19 +82,24 @@ class ScheduleService:
                     employee_names = {}
                     for shift in schedule.get("shifts", []):
                         emp_id = shift.get("employee_id")
-                        if emp_id and emp_id not in employee_names:
-                            employee = await employees_collection.find_one({"_id": emp_id})
+                        if emp_id and IdHandler.id_to_str(emp_id) not in employee_names:
+                            employee, _ = await IdHandler.find_document_by_id(
+                                employees_collection,
+                                emp_id,
+                                not_found_msg=f"Employee not found for ID: {emp_id}"
+                            )
+
                             if employee and employee.get("user_id"):
                                 from app.services.user import get_user_by_id
                                 user = await get_user_by_id(employee.get("user_id"))
                                 if user:
-                                    employee_names[str(emp_id)] = user.get("full_name")
+                                    employee_names[IdHandler.id_to_str(emp_id)] = user.get("full_name")
 
                     schedule_with_info["employee_names"] = employee_names
 
                 result.append(schedule_with_info)
 
-            return format_object_ids(result)
+            return IdHandler.format_object_ids(result)
         except Exception as e:
             print(f"Error getting schedules: {str(e)}")
             return []
@@ -138,9 +126,14 @@ class ScheduleService:
             # Enrich schedule with store and employee info
             schedule_with_info = dict(schedule)
 
-            # Add store info
+            # Add store info using centralized ID handler
             if schedule.get("store_id"):
-                store = await stores_collection.find_one({"_id": schedule.get("store_id")})
+                store, _ = await IdHandler.find_document_by_id(
+                    stores_collection,
+                    schedule.get("store_id"),
+                    not_found_msg=f"Store not found for ID: {schedule.get('store_id')}"
+                )
+
                 if store:
                     schedule_with_info["store_name"] = store.get("name")
 
@@ -149,13 +142,18 @@ class ScheduleService:
                 employee_names = {}
                 for shift in schedule.get("shifts", []):
                     emp_id = shift.get("employee_id")
-                    if emp_id and str(emp_id) not in employee_names:
-                        employee = await employees_collection.find_one({"_id": emp_id})
+                    if emp_id and IdHandler.id_to_str(emp_id) not in employee_names:
+                        employee, _ = await IdHandler.find_document_by_id(
+                            employees_collection,
+                            emp_id,
+                            not_found_msg=f"Employee not found for ID: {emp_id}"
+                        )
+
                         if employee and employee.get("user_id"):
                             from app.services.user import get_user_by_id
                             user = await get_user_by_id(employee.get("user_id"))
                             if user:
-                                employee_names[str(emp_id)] = user.get("full_name")
+                                employee_names[IdHandler.id_to_str(emp_id)] = user.get("full_name")
 
                 schedule_with_info["employee_names"] = employee_names
 
@@ -179,21 +177,40 @@ class ScheduleService:
     @staticmethod
     async def create_schedule(schedule_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Create a new schedule
+        Create a new schedule with standardized ID handling
         """
         try:
             print(f"Creating schedule: {schedule_data}")
 
-            # Validate store exists
+            # Validate store exists using centralized ID handler
             if "store_id" in schedule_data:
-                from app.services.store import StoreService
-                store = await StoreService.get_store(schedule_data["store_id"])
+                store, store_obj_id = await IdHandler.find_document_by_id(
+                    stores_collection,
+                    schedule_data["store_id"],
+                    not_found_msg=f"Store with ID {schedule_data['store_id']} not found"
+                )
+
                 if not store:
                     raise ValueError(f"Store with ID {schedule_data['store_id']} not found")
+
+                # Ensure store_id is stored consistently as string
+                schedule_data["store_id"] = IdHandler.id_to_str(store_obj_id)
 
             # Make sure shifts is always an array
             if "shifts" not in schedule_data:
                 schedule_data["shifts"] = []
+
+            # Ensure created_by is stored as string
+            if "created_by" in schedule_data:
+                from app.services.user import get_user_by_id
+                user, user_obj_id = await IdHandler.find_document_by_id(
+                    get_database().users,
+                    schedule_data["created_by"],
+                    not_found_msg=f"User with ID {schedule_data['created_by']} not found"
+                )
+
+                if user:
+                    schedule_data["created_by"] = IdHandler.id_to_str(user_obj_id)
 
             # Add timestamps
             now = datetime.utcnow()
@@ -203,11 +220,15 @@ class ScheduleService:
             # Insert into database
             result = await schedules_collection.insert_one(schedule_data)
 
-            # Get the created schedule
-            if result.inserted_id:
-                created_schedule = await ScheduleService.get_schedule(str(result.inserted_id))
-                if created_schedule:
-                    return created_schedule
+            # Get the created schedule using our standardized method
+            created_schedule, _ = await IdHandler.find_document_by_id(
+                schedules_collection,
+                str(result.inserted_id),
+                not_found_msg=f"Failed to retrieve created schedule"
+            )
+
+            if created_schedule:
+                return IdHandler.format_object_ids(created_schedule)
 
             raise ValueError("Failed to retrieve created schedule")
         except ValueError as e:
@@ -223,68 +244,91 @@ class ScheduleService:
                 detail=f"Error creating schedule: {str(e)}"
             )
 
-    @staticmethod
     async def update_schedule(schedule_id: str, schedule_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Update an existing schedule
-        """
         try:
-            print(f"Updating schedule with ID: {schedule_id}")
+            # Convert schedule_id to ObjectId
+            schedule_obj_id = ObjectId(schedule_id)
 
-            # Find the schedule
-            schedule, schedule_obj_id = await IdHandler.find_document_by_id(
-                schedules_collection,
-                schedule_id,
-                not_found_msg=f"Schedule with ID {schedule_id} not found"
-            )
+            # Find existing schedule
+            existing_schedule = await schedules_collection.find_one({"_id": schedule_obj_id})
+            if not existing_schedule:
+                raise HTTPException(status_code=404, detail="Schedule not found")
 
-            if not schedule:
-                return None
+            # Prepare update document
+            update_doc = {
+                "$set": {
+                    "title": schedule_data.get("title", existing_schedule.get("title")),
+                    "start_date": schedule_data.get("start_date", existing_schedule.get("start_date")),
+                    "end_date": schedule_data.get("end_date", existing_schedule.get("end_date")),
+                    "updated_at": datetime.utcnow()
+                }
+            }
 
-            # Validate store exists if changing store
-            if "store_id" in schedule_data:
-                from app.services.store import StoreService
-                store = await StoreService.get_store(schedule_data["store_id"])
-                if not store:
-                    raise ValueError(f"Store with ID {schedule_data['store_id']} not found")
+            # Process shifts with comprehensive handling
+            if "shifts" in schedule_data:
+                processed_shifts = []
+                for shift in schedule_data["shifts"]:
+                    # Generate or preserve shift ID
+                    shift_id = shift.get('_id', '')
+                    if not shift_id or shift_id.startswith('temp_'):
+                        shift_id = str(ObjectId())
 
-            # Update timestamp
-            schedule_data["updated_at"] = datetime.utcnow()
+                    clean_shift = {
+                        "_id": shift_id,
+                        "employee_id": str(shift["employee_id"]),
+                        "date": shift["date"],
+                        "start_time": shift["start_time"],
+                        "end_time": shift["end_time"],
+                        "notes": shift.get("notes"),
+                        # Optional: preserve additional metadata if needed
+                        "employee_name": shift.get("employee_name")
+                    }
+                    processed_shifts.append(clean_shift)
 
-            # Update the schedule
-            update_result = await schedules_collection.update_one(
+                # Replace entire shifts array
+                update_doc["$set"]["shifts"] = processed_shifts
+
+            # Perform update
+            result = await schedules_collection.update_one(
                 {"_id": schedule_obj_id},
-                {"$set": schedule_data}
+                update_doc
             )
 
-            if update_result.matched_count == 0:
-                return None
+            # Retrieve updated schedule
+            updated_schedule = await schedules_collection.find_one({"_id": schedule_obj_id})
 
-            # Get the updated schedule
-            updated_schedule = await ScheduleService.get_schedule(schedule_id)
+            # Convert ObjectIds to strings and process schedule
+            if updated_schedule:
+                updated_schedule["_id"] = str(updated_schedule["_id"])
+                updated_schedule["store_id"] = str(updated_schedule.get("store_id", ""))
+                updated_schedule["created_by"] = str(updated_schedule.get("created_by", ""))
+
+                # Process shifts
+                if "shifts" in updated_schedule:
+                    for shift in updated_schedule["shifts"]:
+                        shift["_id"] = str(shift.get("_id", ""))
+                        shift["employee_id"] = str(shift.get("employee_id", ""))
+
             return updated_schedule
-        except ValueError as e:
-            print(f"Validation error updating schedule: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
-            )
+
         except Exception as e:
-            print(f"Error updating schedule: {str(e)}")
+            print(f"Comprehensive update error: {str(e)}")
+            import traceback
+            traceback.print_exc()
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error updating schedule: {str(e)}"
+                status_code=500,
+                detail=f"Update failed: {str(e)}"
             )
 
     @staticmethod
     async def delete_schedule(schedule_id: str) -> bool:
         """
-        Delete a schedule
+        Delete a schedule with standardized ID handling
         """
         try:
             print(f"Deleting schedule with ID: {schedule_id}")
 
-            # Find the schedule
+            # Find the schedule using centralized ID handler
             schedule, schedule_obj_id = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
@@ -308,12 +352,12 @@ class ScheduleService:
     @staticmethod
     async def add_shift(schedule_id: str, shift_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Add a shift to a schedule
+        Add a shift to a schedule with standardized ID handling
         """
         try:
             print(f"Adding shift to schedule {schedule_id}: {shift_data}")
 
-            # Find the schedule
+            # Find the schedule using centralized ID handler
             schedule, schedule_obj_id = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
@@ -323,12 +367,19 @@ class ScheduleService:
             if not schedule:
                 return None
 
-            # Validate employee exists
+            # Validate employee exists using centralized ID handler
             if "employee_id" in shift_data:
-                from app.services.employee import EmployeeService
-                employee = await EmployeeService.get_employee(shift_data["employee_id"])
+                employee, employee_obj_id = await IdHandler.find_document_by_id(
+                    employees_collection,
+                    shift_data["employee_id"],
+                    not_found_msg=f"Employee with ID {shift_data['employee_id']} not found"
+                )
+
                 if not employee:
                     raise ValueError(f"Employee with ID {shift_data['employee_id']} not found")
+
+                # Ensure employee_id is stored consistently as string
+                shift_data["employee_id"] = IdHandler.id_to_str(employee_obj_id)
 
             # Add an ID to the shift
             shift_data["_id"] = str(ObjectId())
@@ -350,8 +401,13 @@ class ScheduleService:
             if update_result.matched_count == 0:
                 return None
 
-            # Get the updated schedule
-            updated_schedule = await ScheduleService.get_schedule(schedule_id)
+            # Get the updated schedule using our standardized method
+            updated_schedule, _ = await IdHandler.find_document_by_id(
+                schedules_collection,
+                schedule_id,
+                not_found_msg=f"Failed to retrieve updated schedule"
+            )
+
             return updated_schedule
         except ValueError as e:
             print(f"Validation error adding shift: {str(e)}")
@@ -369,12 +425,12 @@ class ScheduleService:
     @staticmethod
     async def update_shift(schedule_id: str, shift_id: str, shift_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Update a shift in a schedule
+        Update a shift in a schedule with standardized ID handling
         """
         try:
             print(f"Updating shift {shift_id} in schedule {schedule_id}: {shift_data}")
 
-            # Find the schedule
+            # Find the schedule using centralized ID handler
             schedule, schedule_obj_id = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
@@ -387,7 +443,7 @@ class ScheduleService:
             # Find the shift in the schedule
             shift_exists = False
             for shift in schedule.get("shifts", []):
-                if str(shift.get("_id")) == shift_id:
+                if IdHandler.id_to_str(shift.get("_id")) == shift_id:
                     shift_exists = True
                     break
 
@@ -396,10 +452,17 @@ class ScheduleService:
 
             # Validate employee exists if changing employee
             if "employee_id" in shift_data:
-                from app.services.employee import EmployeeService
-                employee = await EmployeeService.get_employee(shift_data["employee_id"])
+                employee, employee_obj_id = await IdHandler.find_document_by_id(
+                    employees_collection,
+                    shift_data["employee_id"],
+                    not_found_msg=f"Employee with ID {shift_data['employee_id']} not found"
+                )
+
                 if not employee:
                     raise ValueError(f"Employee with ID {shift_data['employee_id']} not found")
+
+                # Ensure employee_id is stored consistently as string
+                shift_data["employee_id"] = IdHandler.id_to_str(employee_obj_id)
 
             # Update timestamp for the schedule
             shift_data["updated_at"] = datetime.utcnow()
@@ -424,8 +487,13 @@ class ScheduleService:
             if update_result.matched_count == 0:
                 return None
 
-            # Get the updated schedule
-            updated_schedule = await ScheduleService.get_schedule(schedule_id)
+            # Get the updated schedule using our standardized method
+            updated_schedule, _ = await IdHandler.find_document_by_id(
+                schedules_collection,
+                schedule_id,
+                not_found_msg=f"Failed to retrieve updated schedule"
+            )
+
             return updated_schedule
         except ValueError as e:
             print(f"Validation error updating shift: {str(e)}")
@@ -443,12 +511,12 @@ class ScheduleService:
     @staticmethod
     async def delete_shift(schedule_id: str, shift_id: str) -> Optional[Dict[str, Any]]:
         """
-        Delete a shift from a schedule
+        Delete a shift from a schedule with standardized ID handling
         """
         try:
             print(f"Deleting shift {shift_id} from schedule {schedule_id}")
 
-            # Find the schedule
+            # Find the schedule using centralized ID handler
             schedule, schedule_obj_id = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
@@ -470,8 +538,13 @@ class ScheduleService:
             if update_result.matched_count == 0:
                 return None
 
-            # Get the updated schedule
-            updated_schedule = await ScheduleService.get_schedule(schedule_id)
+            # Get the updated schedule using our standardized method
+            updated_schedule, _ = await IdHandler.find_document_by_id(
+                schedules_collection,
+                schedule_id,
+                not_found_msg=f"Failed to retrieve updated schedule"
+            )
+
             return updated_schedule
         except Exception as e:
             print(f"Error deleting shift: {str(e)}")
@@ -487,10 +560,20 @@ class ScheduleService:
             end_date: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Get all shifts for an employee across schedules
+        Get all shifts for an employee across schedules with standardized ID handling
         """
         try:
             print(f"Getting shifts for employee {employee_id} from {start_date} to {end_date}")
+
+            # Validate employee exists using centralized ID handler
+            employee, employee_obj_id = await IdHandler.find_document_by_id(
+                employees_collection,
+                employee_id,
+                not_found_msg=f"Employee with ID {employee_id} not found"
+            )
+
+            if not employee:
+                return []
 
             # Build the query
             query = {}
@@ -524,35 +607,37 @@ class ScheduleService:
 
             # Extract shifts for the employee
             employee_shifts = []
-
-            employee_obj_id = ensure_object_id(employee_id)
+            employee_id_str = IdHandler.id_to_str(employee_obj_id)
 
             for schedule in schedules:
                 schedule_info = {
-                    "schedule_id": str(schedule["_id"]),
+                    "schedule_id": IdHandler.id_to_str(schedule["_id"]),
                     "schedule_title": schedule.get("title", "Untitled Schedule"),
-                    "store_id": str(schedule.get("store_id")),
+                    "store_id": IdHandler.id_to_str(schedule.get("store_id")),
                     "store_name": None
                 }
 
-                # Get store info
+                # Get store info using centralized ID handler
                 if schedule.get("store_id"):
-                    store = await stores_collection.find_one({"_id": schedule.get("store_id")})
+                    store, _ = await IdHandler.find_document_by_id(
+                        stores_collection,
+                        schedule.get("store_id"),
+                        not_found_msg=f"Store not found for ID: {schedule.get('store_id')}"
+                    )
+
                     if store:
                         schedule_info["store_name"] = store.get("name")
 
                 # Find shifts for this employee
                 for shift in schedule.get("shifts", []):
-                    shift_emp_id = shift.get("employee_id")
-                    if (isinstance(shift_emp_id, ObjectId) and employee_obj_id and shift_emp_id == employee_obj_id) or \
-                            (isinstance(shift_emp_id, str) and shift_emp_id == employee_id) or \
-                            (str(shift_emp_id) == employee_id):
+                    shift_emp_id = IdHandler.id_to_str(shift.get("employee_id"))
+                    if shift_emp_id == employee_id_str:
                         # Add schedule info to the shift
                         shift_with_info = dict(shift)
                         shift_with_info.update(schedule_info)
                         employee_shifts.append(shift_with_info)
 
-            return format_object_ids(employee_shifts)
+            return IdHandler.format_object_ids(employee_shifts)
         except Exception as e:
             print(f"Error getting employee shifts: {str(e)}")
             return []

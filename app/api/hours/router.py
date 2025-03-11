@@ -21,7 +21,7 @@ async def get_hours(
         end_date: Optional[date] = None,
         employee_id: Optional[str] = None,
         store_id: Optional[str] = None,
-        status: Optional[str] = None,
+        status_filter: Optional[str] = None,
         current_user: Dict[str, Any] = Depends(has_permission("hours:read"))
 ):
     """
@@ -58,7 +58,7 @@ async def get_hours(
             store_id=store_id,
             start_date=start_datetime,
             end_date=end_datetime,
-            status=status
+            status=status_filter
         )
     except HTTPException:
         raise
