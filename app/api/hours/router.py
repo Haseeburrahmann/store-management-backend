@@ -16,6 +16,7 @@ hours_collection = get_hours_collection()
 
 
 @router.get("/", response_model=List[HourWithEmployee])
+@router.get("/", response_model=List[HourWithEmployee])
 async def get_hours(
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
@@ -29,7 +30,7 @@ async def get_hours(
     """
     try:
         print(f"Getting hours with filters: start_date={start_date}, end_date={end_date}, "
-              f"employee_id={employee_id}, store_id={store_id}, status={status}")
+              f"employee_id={employee_id}, store_id={store_id}, status={status_filter}")
 
         # Convert dates to datetime if provided
         start_datetime = datetime.combine(start_date, datetime.min.time()) if start_date else None
