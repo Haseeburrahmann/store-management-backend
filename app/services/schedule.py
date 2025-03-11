@@ -1,12 +1,13 @@
 # app/services/schedule.py
-import re
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
 from fastapi import HTTPException, status
 
 from app.core.db import get_database, get_schedules_collection, get_employees_collection, get_stores_collection
-from app.utils.id_handler import IdHandler
+from app.models.schedule import ScheduleModel, ShiftModel
+from app.utils.id_handler import IdHandler  # Import IdHandler for ID management
+from app.utils.datetime_handler import DateTimeHandler  # Import DateTimeHandler for date handling
 
 # Get database and collections
 db = get_database()
@@ -21,102 +22,82 @@ class ScheduleService:
             skip: int = 0,
             limit: int = 100,
             store_id: Optional[str] = None,
-            employee_id: Optional[str] = None,
-            start_date: Optional[str] = None,
-            end_date: Optional[str] = None
+            week_start_date: Optional[date] = None,
+            include_details: bool = False
     ) -> List[Dict[str, Any]]:
-        """
-        Get all schedules with standardized ID handling
-        """
+        """Get schedules with optional filtering"""
         try:
             query = {}
 
             if store_id:
                 query["store_id"] = store_id
 
-            if start_date:
-                if "end_date" in query:
-                    query["end_date"]["$gte"] = start_date
-                else:
-                    query["end_date"] = {"$gte": start_date}
+            if week_start_date:
+                # Convert date to datetime for MongoDB query
+                week_start_datetime = datetime.combine(week_start_date, datetime.min.time())
+                query["week_start_date"] = week_start_datetime
 
-            if end_date:
-                if "start_date" in query:
-                    query["start_date"]["$lte"] = end_date
-                else:
-                    query["start_date"] = {"$lte": end_date}
-
-            # First get the schedules based on main filters
+            # Get schedules from database
             schedules = await schedules_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
 
-            # Then filter by employee ID if needed
-            if employee_id and schedules:
-                filtered_schedules = []
-                for schedule in schedules:
-                    # Check if any shift has this employee
-                    if "shifts" in schedule:
-                        for shift in schedule.get("shifts", []):
-                            shift_emp_id = shift.get("employee_id")
-                            if IdHandler.id_to_str(shift_emp_id) == IdHandler.id_to_str(employee_id):
-                                filtered_schedules.append(schedule)
-                                break
-                schedules = filtered_schedules
-
-            # Enrich schedules with store and employee info
+            # Format schedules for API response
             result = []
             for schedule in schedules:
                 schedule_with_info = dict(schedule)
 
-                # Add store info using centralized ID handler
-                if schedule.get("store_id"):
+                # Get store info if requested
+                if include_details and "store_id" in schedule:
                     store, _ = await IdHandler.find_document_by_id(
                         stores_collection,
-                        schedule.get("store_id"),
-                        not_found_msg=f"Store not found for ID: {schedule.get('store_id')}"
+                        schedule["store_id"],
+                        not_found_msg=f"Store not found for ID: {schedule['store_id']}"
                     )
 
                     if store:
-                        schedule_with_info["store_name"] = store.get("name")
+                        schedule_with_info["store_name"] = store["name"]
 
-                # Get names of all employees in shifts
-                if "shifts" in schedule:
-                    employee_names = {}
-                    for shift in schedule.get("shifts", []):
-                        emp_id = shift.get("employee_id")
-                        if emp_id and IdHandler.id_to_str(emp_id) not in employee_names:
+                # Get creator info if requested
+                if include_details and "created_by" in schedule:
+                    from app.services.user import get_user_by_id
+                    creator = await get_user_by_id(schedule["created_by"])
+                    if creator:
+                        schedule_with_info["created_by_name"] = creator["full_name"]
+
+                # Enrich shifts with employee names if requested
+                if include_details and "shifts" in schedule:
+                    enriched_shifts = []
+                    for shift in schedule["shifts"]:
+                        shift_with_info = dict(shift)
+                        if "employee_id" in shift:
                             employee, _ = await IdHandler.find_document_by_id(
                                 employees_collection,
-                                emp_id,
-                                not_found_msg=f"Employee not found for ID: {emp_id}"
+                                shift["employee_id"],
+                                not_found_msg=f"Employee not found for ID: {shift['employee_id']}"
                             )
 
-                            if employee and employee.get("user_id"):
+                            if employee and "user_id" in employee:
                                 from app.services.user import get_user_by_id
-                                user = await get_user_by_id(employee.get("user_id"))
+                                user = await get_user_by_id(employee["user_id"])
                                 if user:
-                                    employee_names[IdHandler.id_to_str(emp_id)] = user.get("full_name")
+                                    shift_with_info["employee_name"] = user["full_name"]
+                        enriched_shifts.append(shift_with_info)
+                    schedule_with_info["shifts"] = enriched_shifts
 
-                    schedule_with_info["employee_names"] = employee_names
-
+                # Format all IDs consistently
+                schedule_with_info = IdHandler.format_object_ids(schedule_with_info)
                 result.append(schedule_with_info)
 
-            return IdHandler.format_object_ids(result)
+            return result
         except Exception as e:
             print(f"Error getting schedules: {str(e)}")
             return []
 
-    # Improved schedule.py functions
-
     @staticmethod
-    async def get_schedule(schedule_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a specific schedule by ID with standardized ID handling
-        """
+    async def get_schedule(schedule_id: str, include_details: bool = True) -> Optional[Dict[str, Any]]:
+        """Get a schedule by ID using IdHandler"""
         try:
-            print(f"Getting schedule with ID: {schedule_id}")
-
-            # Find the schedule using centralized ID handler
-            schedule, schedule_obj_id = await IdHandler.find_document_by_id(
+            # Find schedule using IdHandler
+            schedule, _ = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
                 not_found_msg=f"Schedule with ID {schedule_id} not found"
@@ -125,90 +106,63 @@ class ScheduleService:
             if not schedule:
                 return None
 
-            # Format for frontend consistency
-            formatted_schedule = dict(schedule)
-            formatted_schedule["_id"] = IdHandler.id_to_str(schedule.get("_id"))
-            formatted_schedule["store_id"] = IdHandler.id_to_str(schedule.get("store_id"))
+            # Format for API response
+            schedule_with_info = dict(schedule)
 
-            if "created_by" in schedule:
-                formatted_schedule["created_by"] = IdHandler.id_to_str(schedule.get("created_by"))
-
-            # Format shifts array
-            if "shifts" in schedule:
-                formatted_shifts = []
-                for shift in schedule.get("shifts", []):
-                    formatted_shift = dict(shift)
-                    formatted_shift["_id"] = IdHandler.id_to_str(shift.get("_id"))
-                    formatted_shift["employee_id"] = IdHandler.id_to_str(shift.get("employee_id"))
-                    formatted_shifts.append(formatted_shift)
-                formatted_schedule["shifts"] = formatted_shifts
-
-            # Add store info
-            if schedule.get("store_id"):
+            # Get store info if requested
+            if include_details and "store_id" in schedule:
                 store, _ = await IdHandler.find_document_by_id(
                     stores_collection,
-                    schedule.get("store_id"),
-                    not_found_msg=f"Store not found for ID: {schedule.get('store_id')}"
+                    schedule["store_id"],
+                    not_found_msg=f"Store not found for ID: {schedule['store_id']}"
                 )
 
                 if store:
-                    formatted_schedule["store_name"] = store.get("name")
+                    schedule_with_info["store_name"] = store["name"]
 
-            # Get names of all employees in shifts
-            if "shifts" in schedule:
-                employee_names = {}
-                for shift in schedule.get("shifts", []):
-                    emp_id = shift.get("employee_id")
-                    if emp_id and IdHandler.id_to_str(emp_id) not in employee_names:
+            # Get creator info if requested
+            if include_details and "created_by" in schedule:
+                from app.services.user import get_user_by_id
+                creator = await get_user_by_id(schedule["created_by"])
+                if creator:
+                    schedule_with_info["created_by_name"] = creator["full_name"]
+
+            # Enrich shifts with employee names if requested
+            if include_details and "shifts" in schedule:
+                enriched_shifts = []
+                for shift in schedule["shifts"]:
+                    shift_with_info = dict(shift)
+                    if "employee_id" in shift:
                         employee, _ = await IdHandler.find_document_by_id(
                             employees_collection,
-                            emp_id,
-                            not_found_msg=f"Employee not found for ID: {emp_id}"
+                            shift["employee_id"],
+                            not_found_msg=f"Employee not found for ID: {shift['employee_id']}"
                         )
 
-                        if employee and employee.get("user_id"):
+                        if employee and "user_id" in employee:
                             from app.services.user import get_user_by_id
-                            user = await get_user_by_id(employee.get("user_id"))
+                            user = await get_user_by_id(employee["user_id"])
                             if user:
-                                employee_names[IdHandler.id_to_str(emp_id)] = user.get("full_name")
+                                shift_with_info["employee_name"] = user["full_name"]
+                    enriched_shifts.append(shift_with_info)
+                schedule_with_info["shifts"] = enriched_shifts
 
-                formatted_schedule["employee_names"] = employee_names
-
-            return formatted_schedule
+            # Format all IDs consistently
+            return IdHandler.format_object_ids(schedule_with_info)
         except Exception as e:
             print(f"Error getting schedule: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error getting schedule: {str(e)}"
-            )
-
-    @staticmethod
-    async def get_schedules_by_store(store_id: str) -> List[Dict[str, Any]]:
-        """
-        Get schedules for a specific store
-        """
-        try:
-            print(f"Getting schedules for store ID: {store_id}")
-            return await ScheduleService.get_schedules(store_id=store_id)
-        except Exception as e:
-            print(f"Error getting schedules by store: {str(e)}")
-            return []
+            return None
 
     @staticmethod
     async def create_schedule(schedule_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Create a new schedule with enhanced validation
-        """
+        """Create a new schedule using IdHandler for ID management and DateTimeHandler for date handling"""
         try:
-            print(f"Creating schedule: {schedule_data}")
-
             # Validate required fields
-            required_fields = ["title", "store_id", "start_date", "end_date"]
-            for field in required_fields:
+            for field in ["store_id", "title", "week_start_date", "created_by"]:
                 if field not in schedule_data:
                     raise ValueError(f"Missing required field: {field}")
 
-            # Validate store exists using centralized ID handler
+            # Check if store exists using IdHandler
             store, store_obj_id = await IdHandler.find_document_by_id(
                 stores_collection,
                 schedule_data["store_id"],
@@ -218,33 +172,70 @@ class ScheduleService:
             if not store:
                 raise ValueError(f"Store with ID {schedule_data['store_id']} not found")
 
-            # Ensure store_id is stored consistently as string
+            # Store the standardized store_id
             schedule_data["store_id"] = IdHandler.id_to_str(store_obj_id)
 
-            # Validate dates
-            start_date = schedule_data["start_date"]
-            end_date = schedule_data["end_date"]
+            # Check if creator exists using IdHandler
+            from app.services.user import get_user_by_id
+            creator = await get_user_by_id(schedule_data["created_by"])
+            if not creator:
+                raise ValueError(f"Creator with ID {schedule_data['created_by']} not found")
 
-            # Check date format
-            if not (re.match(r'^\d{4}-\d{2}-\d{2}$', start_date) and re.match(r'^\d{4}-\d{2}-\d{2}$', end_date)):
-                raise ValueError("Dates must be in YYYY-MM-DD format")
+            # Handle week_start_date (normalize to datetime for MongoDB storage)
+            if isinstance(schedule_data["week_start_date"], str):
+                # Parse date string
+                week_start_date = DateTimeHandler.parse_date(schedule_data["week_start_date"])
+                if not week_start_date:
+                    raise ValueError(
+                        f"Invalid week_start_date format: {schedule_data['week_start_date']}. Expected YYYY-MM-DD")
 
-            # Check date range
-            if start_date > end_date:
-                raise ValueError("End date must be on or after start date")
+                schedule_data["week_start_date"] = week_start_date
+            elif isinstance(schedule_data["week_start_date"], date) and not isinstance(schedule_data["week_start_date"],
+                                                                                       datetime):
+                # Convert date to datetime for MongoDB storage
+                schedule_data["week_start_date"] = datetime.combine(schedule_data["week_start_date"],
+                                                                    datetime.min.time())
+
+            # Calculate week_end_date if not provided
+            if "week_end_date" not in schedule_data:
+                if isinstance(schedule_data["week_start_date"], datetime):
+                    week_start = schedule_data["week_start_date"].date()
+                else:
+                    week_start = schedule_data["week_start_date"]
+
+                week_end = week_start + timedelta(days=6)
+
+                # Convert to datetime for MongoDB storage
+                schedule_data["week_end_date"] = datetime.combine(week_end, datetime.min.time())
+            elif isinstance(schedule_data["week_end_date"], date) and not isinstance(schedule_data["week_end_date"],
+                                                                                     datetime):
+                # Convert date to datetime for MongoDB storage
+                schedule_data["week_end_date"] = datetime.combine(schedule_data["week_end_date"], datetime.min.time())
+
+            # Check for existing schedule for the same week and store
+            existing_schedule = await schedules_collection.find_one({
+                "store_id": schedule_data["store_id"],
+                "week_start_date": schedule_data["week_start_date"]
+            })
+
+            if existing_schedule:
+                raise ValueError(
+                    f"Schedule already exists for store {schedule_data['store_id']} for week starting {schedule_data['week_start_date']}")
+
+            # Initialize empty shifts array if not provided
+            if "shifts" not in schedule_data:
+                schedule_data["shifts"] = []
 
             # Validate shifts if provided
-            if "shifts" in schedule_data and schedule_data["shifts"]:
+            if schedule_data["shifts"]:
                 validated_shifts = []
-
                 for shift in schedule_data["shifts"]:
                     # Validate required shift fields
-                    shift_required_fields = ["employee_id", "date", "start_time", "end_time"]
-                    for field in shift_required_fields:
+                    for field in ["employee_id", "day_of_week", "start_time", "end_time"]:
                         if field not in shift:
                             raise ValueError(f"Shift missing required field: {field}")
 
-                    # Validate employee exists
+                    # Check if employee exists using IdHandler
                     employee, employee_obj_id = await IdHandler.find_document_by_id(
                         employees_collection,
                         shift["employee_id"],
@@ -254,114 +245,55 @@ class ScheduleService:
                     if not employee:
                         raise ValueError(f"Employee with ID {shift['employee_id']} not found")
 
-                    # Ensure employee_id is stored consistently as string
-                    validated_shift = dict(shift)
-                    validated_shift["employee_id"] = IdHandler.id_to_str(employee_obj_id)
+                    # Store the standardized employee_id
+                    shift["employee_id"] = IdHandler.id_to_str(employee_obj_id)
 
-                    # Validate shift date
-                    shift_date = shift["date"]
-                    if not re.match(r'^\d{4}-\d{2}-\d{2}$', shift_date):
-                        raise ValueError(f"Shift date must be in YYYY-MM-DD format: {shift_date}")
+                    # Validate day_of_week
+                    valid_days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                    day_lower = shift["day_of_week"].lower()
+                    if day_lower not in valid_days:
+                        raise ValueError(f"Invalid day of week: {shift['day_of_week']}. Must be one of {valid_days}")
+                    shift["day_of_week"] = day_lower
 
-                    # Check if shift date is within schedule range
-                    if shift_date < start_date or shift_date > end_date:
-                        raise ValueError(
-                            f"Shift date {shift_date} must be within schedule date range ({start_date} - {end_date})")
+                    # Validate start_time and end_time format (HH:MM)
+                    for time_field in ["start_time", "end_time"]:
+                        time_str = shift[time_field]
+                        valid_time = DateTimeHandler.parse_time(time_str)
+                        if not valid_time:
+                            raise ValueError(f"Time must be in HH:MM format (24-hour): {time_str}")
 
-                    # Validate shift times
-                    start_time = shift["start_time"]
-                    end_time = shift["end_time"]
+                    # Validate end_time is after start_time
+                    if shift["end_time"] <= shift["start_time"]:
+                        raise ValueError("End time must be after start time")
 
-                    if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', start_time):
-                        raise ValueError(f"Shift start time must be in HH:MM format (24-hour): {start_time}")
+                    # Generate an ID for the shift if not provided
+                    if "_id" not in shift:
+                        shift["_id"] = str(ObjectId())
 
-                    if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', end_time):
-                        raise ValueError(f"Shift end time must be in HH:MM format (24-hour): {end_time}")
-
-                    if end_time <= start_time:
-                        raise ValueError("Shift end time must be after start time")
-
-                    # Add an ID to the shift
-                    validated_shift["_id"] = str(ObjectId())
-
-                    validated_shifts.append(validated_shift)
+                    validated_shifts.append(shift)
 
                 schedule_data["shifts"] = validated_shifts
-            else:
-                schedule_data["shifts"] = []
-
-            # Ensure created_by is stored as string if provided
-            if "created_by" in schedule_data:
-                from app.services.user import get_user_by_id
-                user, user_obj_id = await IdHandler.find_document_by_id(
-                    get_database().users,
-                    schedule_data["created_by"],
-                    not_found_msg=f"User with ID {schedule_data['created_by']} not found"
-                )
-
-                if user:
-                    schedule_data["created_by"] = IdHandler.id_to_str(user_obj_id)
 
             # Add timestamps
-            now = datetime.utcnow()
-            schedule_data["created_at"] = now
-            schedule_data["updated_at"] = now
+            schedule_data["created_at"] = datetime.utcnow()
+            schedule_data["updated_at"] = datetime.utcnow()
 
             # Insert into database
             result = await schedules_collection.insert_one(schedule_data)
             inserted_id = result.inserted_id
 
-            # Get the created schedule
-            created_schedule = await schedules_collection.find_one({"_id": inserted_id})
+            # Get the created schedule using IdHandler
+            created_schedule, _ = await IdHandler.find_document_by_id(
+                schedules_collection,
+                str(inserted_id),
+                not_found_msg="Failed to retrieve created schedule"
+            )
+
             if not created_schedule:
                 raise ValueError("Failed to retrieve created schedule")
 
-            # Format for frontend consistency
-            formatted_schedule = dict(created_schedule)
-            formatted_schedule["_id"] = IdHandler.id_to_str(inserted_id)
-            formatted_schedule["store_id"] = IdHandler.id_to_str(created_schedule.get("store_id"))
-
-            if "created_by" in formatted_schedule:
-                formatted_schedule["created_by"] = IdHandler.id_to_str(formatted_schedule.get("created_by"))
-
-            # Format shifts array
-            if "shifts" in formatted_schedule:
-                formatted_shifts = []
-                for shift in formatted_schedule.get("shifts", []):
-                    formatted_shift = dict(shift)
-                    formatted_shift["_id"] = IdHandler.id_to_str(shift.get("_id"))
-                    formatted_shift["employee_id"] = IdHandler.id_to_str(shift.get("employee_id"))
-                    formatted_shifts.append(formatted_shift)
-                formatted_schedule["shifts"] = formatted_shifts
-
-            # Add store name
-            formatted_schedule["store_name"] = store.get("name")
-
-            # Get names of employees in shifts efficiently
-            employee_names = {}
-            if "shifts" in formatted_schedule:
-                employee_ids = set()
-                for shift in formatted_schedule.get("shifts", []):
-                    emp_id = shift.get("employee_id")
-                    if emp_id:
-                        employee_ids.add(emp_id)
-
-                for emp_id in employee_ids:
-                    employee, _ = await IdHandler.find_document_by_id(
-                        employees_collection,
-                        emp_id,
-                        not_found_msg=f"Employee not found for ID: {emp_id}"
-                    )
-
-                    if employee and employee.get("user_id"):
-                        from app.services.user import get_user_by_id
-                        user = await get_user_by_id(employee.get("user_id"))
-                        if user:
-                            employee_names[emp_id] = user.get("full_name")
-
-            formatted_schedule["employee_names"] = employee_names
-
-            return formatted_schedule
+            # Format all IDs consistently
+            return IdHandler.format_object_ids(created_schedule)
         except ValueError as e:
             print(f"Validation error creating schedule: {str(e)}")
             raise HTTPException(
@@ -375,77 +307,120 @@ class ScheduleService:
                 detail=f"Error creating schedule: {str(e)}"
             )
 
-    # In app/services/schedule.py
     @staticmethod
     async def update_schedule(schedule_id: str, schedule_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update an existing schedule using IdHandler"""
         try:
-            print(f"Processing schedule update for ID: {schedule_id}")
-
-            # Convert schedule_id to ObjectId
-            schedule_obj_id = IdHandler.ensure_object_id(schedule_id)
-            if not schedule_obj_id:
-                print(f"Invalid schedule ID format: {schedule_id}")
-                return None
-
-            # Find existing schedule
-            existing_schedule = await schedules_collection.find_one({"_id": schedule_obj_id})
-            if not existing_schedule:
-                print(f"Schedule not found with ID: {schedule_id}")
-                return None
-
-            # Create a complete new document based on the existing one
-            new_schedule = dict(existing_schedule)
-
-            # Update basic fields
-            for field in ["title", "store_id", "start_date", "end_date"]:
-                if field in schedule_data:
-                    new_schedule[field] = schedule_data[field]
-
-            # Update timestamp
-            new_schedule["updated_at"] = datetime.utcnow()
-
-            # Handle shifts with the helper method
-            if "shifts" in schedule_data and isinstance(schedule_data["shifts"], list):
-                print(f"Processing {len(schedule_data['shifts'])} shifts")
-
-                # Use the helper method to process each shift
-                processed_shifts = [IdHandler.process_shift(shift) for shift in schedule_data["shifts"]]
-
-                # Replace the shifts array completely
-                new_schedule["shifts"] = processed_shifts
-                print(f"Final processed shifts: {len(processed_shifts)}")
-
-            # Replace the entire document
-            result = await schedules_collection.replace_one(
-                {"_id": schedule_obj_id},
-                new_schedule
+            # Find schedule using IdHandler
+            schedule, schedule_obj_id = await IdHandler.find_document_by_id(
+                schedules_collection,
+                schedule_id,
+                not_found_msg=f"Schedule with ID {schedule_id} not found"
             )
 
-            print(f"Update result: matched={result.matched_count}, modified={result.modified_count}")
-
-            # Get the updated document
-            updated_schedule = await schedules_collection.find_one({"_id": schedule_obj_id})
-            if updated_schedule:
-                return IdHandler.format_object_ids(updated_schedule)
-            else:
-                print(f"Failed to retrieve updated schedule")
+            if not schedule:
                 return None
 
+            # Prepare update data
+            update_data = {}
+
+            # Handle basic fields
+            if "title" in schedule_data:
+                update_data["title"] = schedule_data["title"]
+
+            # Handle shifts if provided
+            if "shifts" in schedule_data:
+                if schedule_data["shifts"] is None:
+                    # Clear all shifts
+                    update_data["shifts"] = []
+                else:
+                    # Validate and process each shift
+                    validated_shifts = []
+                    for shift in schedule_data["shifts"]:
+                        # Validate required shift fields
+                        for field in ["employee_id", "day_of_week", "start_time", "end_time"]:
+                            if field not in shift:
+                                raise ValueError(f"Shift missing required field: {field}")
+
+                        # Check if employee exists using IdHandler
+                        employee, employee_obj_id = await IdHandler.find_document_by_id(
+                            employees_collection,
+                            shift["employee_id"],
+                            not_found_msg=f"Employee with ID {shift['employee_id']} not found"
+                        )
+
+                        if not employee:
+                            raise ValueError(f"Employee with ID {shift['employee_id']} not found")
+
+                        # Store the standardized employee_id
+                        shift["employee_id"] = IdHandler.id_to_str(employee_obj_id)
+
+                        # Validate day_of_week
+                        valid_days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                        day_lower = shift["day_of_week"].lower()
+                        if day_lower not in valid_days:
+                            raise ValueError(
+                                f"Invalid day of week: {shift['day_of_week']}. Must be one of {valid_days}")
+                        shift["day_of_week"] = day_lower
+
+                        # Validate start_time and end_time format (HH:MM)
+                        for time_field in ["start_time", "end_time"]:
+                            time_str = shift[time_field]
+                            valid_time = DateTimeHandler.parse_time(time_str)
+                            if not valid_time:
+                                raise ValueError(f"Time must be in HH:MM format (24-hour): {time_str}")
+
+                        # Validate end_time is after start_time
+                        if shift["end_time"] <= shift["start_time"]:
+                            raise ValueError("End time must be after start time")
+
+                        # Generate an ID for the shift if not provided
+                        if "_id" not in shift:
+                            shift["_id"] = str(ObjectId())
+
+                        validated_shifts.append(shift)
+
+                    update_data["shifts"] = validated_shifts
+
+            # Update timestamp
+            update_data["updated_at"] = datetime.utcnow()
+
+            # Update the schedule
+            update_result = await schedules_collection.update_one(
+                {"_id": schedule_obj_id},
+                {"$set": update_data}
+            )
+
+            if update_result.matched_count == 0:
+                return None
+
+            # Get the updated schedule using IdHandler
+            updated_schedule, _ = await IdHandler.find_document_by_id(
+                schedules_collection,
+                schedule_id,
+                not_found_msg="Failed to retrieve updated schedule"
+            )
+
+            # Format all IDs consistently
+            return IdHandler.format_object_ids(updated_schedule)
+        except ValueError as e:
+            print(f"Validation error updating schedule: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
         except Exception as e:
             print(f"Error updating schedule: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return None
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error updating schedule: {str(e)}"
+            )
 
     @staticmethod
     async def delete_schedule(schedule_id: str) -> bool:
-        """
-        Delete a schedule with standardized ID handling
-        """
+        """Delete a schedule using IdHandler"""
         try:
-            print(f"Deleting schedule with ID: {schedule_id}")
-
-            # Find the schedule using centralized ID handler
+            # Find schedule using IdHandler
             schedule, schedule_obj_id = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
@@ -468,13 +443,9 @@ class ScheduleService:
 
     @staticmethod
     async def add_shift(schedule_id: str, shift_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Add a shift to a schedule with improved validation and ID handling
-        """
+        """Add a shift to an existing schedule using IdHandler"""
         try:
-            print(f"Adding shift to schedule {schedule_id}: {shift_data}")
-
-            # Find the schedule using centralized ID handler
+            # Find schedule using IdHandler
             schedule, schedule_obj_id = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
@@ -484,111 +455,66 @@ class ScheduleService:
             if not schedule:
                 return None
 
-            schedule_id_str = IdHandler.id_to_str(schedule_obj_id)
+            # Validate required shift fields
+            for field in ["employee_id", "day_of_week", "start_time", "end_time"]:
+                if field not in shift_data:
+                    raise ValueError(f"Shift missing required field: {field}")
 
-            # Validate employee exists using centralized ID handler
-            if "employee_id" in shift_data:
-                employee, employee_obj_id = await IdHandler.find_document_by_id(
-                    employees_collection,
-                    shift_data["employee_id"],
-                    not_found_msg=f"Employee with ID {shift_data['employee_id']} not found"
-                )
+            # Check if employee exists using IdHandler
+            employee, employee_obj_id = await IdHandler.find_document_by_id(
+                employees_collection,
+                shift_data["employee_id"],
+                not_found_msg=f"Employee with ID {shift_data['employee_id']} not found"
+            )
 
-                if not employee:
-                    raise ValueError(f"Employee with ID {shift_data['employee_id']} not found")
+            if not employee:
+                raise ValueError(f"Employee with ID {shift_data['employee_id']} not found")
 
-                # Ensure employee_id is stored consistently as string
-                shift_data["employee_id"] = IdHandler.id_to_str(employee_obj_id)
+            # Store the standardized employee_id
+            shift_data["employee_id"] = IdHandler.id_to_str(employee_obj_id)
 
-            # Validate shift dates fall within schedule dates
-            if "date" in shift_data:
-                schedule_start = schedule.get("start_date")
-                schedule_end = schedule.get("end_date")
-                shift_date = shift_data["date"]
+            # Validate day_of_week
+            valid_days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+            day_lower = shift_data["day_of_week"].lower()
+            if day_lower not in valid_days:
+                raise ValueError(f"Invalid day of week: {shift_data['day_of_week']}. Must be one of {valid_days}")
+            shift_data["day_of_week"] = day_lower
 
-                if shift_date < schedule_start or shift_date > schedule_end:
-                    raise ValueError(
-                        f"Shift date {shift_date} must be within schedule date range ({schedule_start} - {schedule_end})")
+            # Validate start_time and end_time format (HH:MM)
+            for time_field in ["start_time", "end_time"]:
+                time_str = shift_data[time_field]
+                valid_time = DateTimeHandler.parse_time(time_str)
+                if not valid_time:
+                    raise ValueError(f"Time must be in HH:MM format (24-hour): {time_str}")
 
-            # Validate shift times
-            if "start_time" in shift_data and "end_time" in shift_data:
-                start_time = shift_data["start_time"]
-                end_time = shift_data["end_time"]
+            # Validate end_time is after start_time
+            if shift_data["end_time"] <= shift_data["start_time"]:
+                raise ValueError("End time must be after start time")
 
-                # Simple format validation (HH:MM)
-                if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', start_time):
-                    raise ValueError("Start time must be in HH:MM format (24-hour)")
-
-                if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', end_time):
-                    raise ValueError("End time must be in HH:MM format (24-hour)")
-
-                # Validate end time is after start time
-                if end_time <= start_time:
-                    raise ValueError("End time must be after start time")
-
-            # Add an ID to the shift
+            # Generate an ID for the shift
             shift_data["_id"] = str(ObjectId())
-
-            # Update timestamp for the schedule
-            update_data = {
-                "updated_at": datetime.utcnow()
-            }
 
             # Add the shift to the schedule
             update_result = await schedules_collection.update_one(
                 {"_id": schedule_obj_id},
                 {
-                    "$set": update_data,
-                    "$push": {"shifts": shift_data}
+                    "$push": {"shifts": shift_data},
+                    "$set": {"updated_at": datetime.utcnow()}
                 }
             )
 
             if update_result.matched_count == 0:
                 return None
 
-            # Get the updated schedule
-            updated_schedule = await schedules_collection.find_one({"_id": schedule_obj_id})
-            if not updated_schedule:
-                print("Failed to retrieve updated schedule")
-                return None
+            # Get the updated schedule using IdHandler
+            updated_schedule, _ = await IdHandler.find_document_by_id(
+                schedules_collection,
+                schedule_id,
+                not_found_msg="Failed to retrieve updated schedule"
+            )
 
-            # Format the updated schedule
-            formatted_schedule = dict(updated_schedule)
-            formatted_schedule["_id"] = schedule_id_str
-            formatted_schedule["store_id"] = IdHandler.id_to_str(updated_schedule.get("store_id"))
-            formatted_schedule["created_by"] = IdHandler.id_to_str(updated_schedule.get("created_by"))
-
-            # Format shifts array
-            if "shifts" in updated_schedule:
-                formatted_shifts = []
-                for shift in updated_schedule.get("shifts", []):
-                    formatted_shift = dict(shift)
-                    formatted_shift["_id"] = IdHandler.id_to_str(shift.get("_id"))
-                    formatted_shift["employee_id"] = IdHandler.id_to_str(shift.get("employee_id"))
-                    formatted_shifts.append(formatted_shift)
-                formatted_schedule["shifts"] = formatted_shifts
-
-            # Add store name
-            store = await stores_collection.find_one({"_id": updated_schedule.get("store_id")})
-            if store:
-                formatted_schedule["store_name"] = store.get("name")
-
-            # Get names of employees in shifts
-            employee_names = {}
-            if "shifts" in updated_schedule:
-                for shift in updated_schedule.get("shifts", []):
-                    emp_id = shift.get("employee_id")
-                    if emp_id and IdHandler.id_to_str(emp_id) not in employee_names:
-                        employee = await employees_collection.find_one({"_id": emp_id})
-                        if employee and employee.get("user_id"):
-                            from app.services.user import get_user_by_id
-                            user = await get_user_by_id(employee.get("user_id"))
-                            if user:
-                                employee_names[IdHandler.id_to_str(emp_id)] = user.get("full_name")
-
-            formatted_schedule["employee_names"] = employee_names
-
-            return formatted_schedule
+            # Format all IDs consistently
+            return IdHandler.format_object_ids(updated_schedule)
         except ValueError as e:
             print(f"Validation error adding shift: {str(e)}")
             raise HTTPException(
@@ -604,13 +530,9 @@ class ScheduleService:
 
     @staticmethod
     async def update_shift(schedule_id: str, shift_id: str, shift_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Update a shift in a schedule with improved error handling and ID consistency
-        """
+        """Update a shift in a schedule using IdHandler"""
         try:
-            print(f"Updating shift {shift_id} in schedule {schedule_id}: {shift_data}")
-
-            # Find the schedule using centralized ID handler
+            # Find schedule using IdHandler
             schedule, schedule_obj_id = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
@@ -620,25 +542,21 @@ class ScheduleService:
             if not schedule:
                 return None
 
-            schedule_id_str = IdHandler.id_to_str(schedule_obj_id)
-            shift_id_str = IdHandler.id_to_str(shift_id)
-
-            # Find the shift in the schedule
-            shift_exists = False
-            current_shift = None
-
+            # Find the shift
+            existing_shift = None
             for shift in schedule.get("shifts", []):
-                shift_in_schedule_id = IdHandler.id_to_str(shift.get("_id"))
-                if shift_in_schedule_id == shift_id_str:
-                    shift_exists = True
-                    current_shift = shift
+                if IdHandler.id_to_str(shift.get("_id")) == shift_id:
+                    existing_shift = shift
                     break
 
-            if not shift_exists or not current_shift:
+            if not existing_shift:
                 raise ValueError(f"Shift with ID {shift_id} not found in schedule {schedule_id}")
 
-            # Validate employee exists if changing employee
+            # Validate and update shift fields
+            updated_shift = dict(existing_shift)
+
             if "employee_id" in shift_data:
+                # Check if employee exists using IdHandler
                 employee, employee_obj_id = await IdHandler.find_document_by_id(
                     employees_collection,
                     shift_data["employee_id"],
@@ -648,125 +566,67 @@ class ScheduleService:
                 if not employee:
                     raise ValueError(f"Employee with ID {shift_data['employee_id']} not found")
 
-                # Ensure employee_id is stored consistently as string
-                shift_data["employee_id"] = IdHandler.id_to_str(employee_obj_id)
+                # Store the standardized employee_id
+                updated_shift["employee_id"] = IdHandler.id_to_str(employee_obj_id)
 
-            # Validate shift dates fall within schedule dates if changing date
-            if "date" in shift_data:
-                schedule_start = schedule.get("start_date")
-                schedule_end = schedule.get("end_date")
-                shift_date = shift_data["date"]
+            if "day_of_week" in shift_data:
+                # Validate day_of_week
+                valid_days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                day_lower = shift_data["day_of_week"].lower()
+                if day_lower not in valid_days:
+                    raise ValueError(f"Invalid day of week: {shift_data['day_of_week']}. Must be one of {valid_days}")
 
-                if shift_date < schedule_start or shift_date > schedule_end:
-                    raise ValueError(
-                        f"Shift date {shift_date} must be within schedule date range ({schedule_start} - {schedule_end})")
+                updated_shift["day_of_week"] = day_lower
 
-            # Validate shift times if changing times
-            start_time = shift_data.get("start_time") or current_shift.get("start_time")
-            end_time = shift_data.get("end_time") or current_shift.get("end_time")
+            for time_field in ["start_time", "end_time"]:
+                if time_field in shift_data:
+                    # Validate time format (HH:MM)
+                    time_str = shift_data[time_field]
+                    valid_time = DateTimeHandler.parse_time(time_str)
+                    if not valid_time:
+                        raise ValueError(f"Time must be in HH:MM format (24-hour): {time_str}")
 
-            if "start_time" in shift_data:
-                # Simple format validation (HH:MM)
-                if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', shift_data["start_time"]):
-                    raise ValueError("Start time must be in HH:MM format (24-hour)")
+                    updated_shift[time_field] = shift_data[time_field]
 
-            if "end_time" in shift_data:
-                # Simple format validation (HH:MM)
-                if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', shift_data["end_time"]):
-                    raise ValueError("End time must be in HH:MM format (24-hour)")
+            # Validate end_time is after start_time
+            if "start_time" in updated_shift and "end_time" in updated_shift:
+                if updated_shift["end_time"] <= updated_shift["start_time"]:
+                    raise ValueError("End time must be after start time")
 
-            # Validate end time is after start time
-            if end_time <= start_time:
-                raise ValueError("End time must be after start time")
+            if "notes" in shift_data:
+                updated_shift["notes"] = shift_data["notes"]
 
-            # Create a merge of current shift with updates
-            merged_shift = {**current_shift}
-            for key, value in shift_data.items():
-                merged_shift[key] = value
-
-            # Preserve the shift ID
-            merged_shift["_id"] = shift_id_str
-
-            # Update the schedule with the new shift data
-            # This is a more reliable approach than the positional $ operator
-            shifts = schedule.get("shifts", [])
-            updated_shifts = []
-
-            for shift in shifts:
-                if IdHandler.id_to_str(shift.get("_id")) == shift_id_str:
-                    updated_shifts.append(merged_shift)
-                else:
-                    updated_shifts.append(shift)
-
-            # Update timestamp
-            now = datetime.utcnow()
-
-            # Update the whole schedule document
+            # Update the shift in the schedule
+            # We need to pull the existing shift and push the updated one
             update_result = await schedules_collection.update_one(
                 {"_id": schedule_obj_id},
                 {
-                    "$set": {
-                        "shifts": updated_shifts,
-                        "updated_at": now
-                    }
+                    "$pull": {"shifts": {"_id": shift_id}},
+                    "$set": {"updated_at": datetime.utcnow()}
                 }
             )
 
             if update_result.matched_count == 0:
                 return None
 
-            # Get the updated schedule
-            updated_schedule = await schedules_collection.find_one({"_id": schedule_obj_id})
-            if not updated_schedule:
-                print("Failed to retrieve updated schedule")
-                return None
+            # Push the updated shift
+            await schedules_collection.update_one(
+                {"_id": schedule_obj_id},
+                {
+                    "$push": {"shifts": updated_shift},
+                    "$set": {"updated_at": datetime.utcnow()}
+                }
+            )
 
-            # Format for frontend consistency
-            formatted_schedule = dict(updated_schedule)
-            formatted_schedule["_id"] = schedule_id_str
-            formatted_schedule["store_id"] = IdHandler.id_to_str(updated_schedule.get("store_id"))
-            formatted_schedule["created_by"] = IdHandler.id_to_str(updated_schedule.get("created_by"))
+            # Get the updated schedule using IdHandler
+            updated_schedule, _ = await IdHandler.find_document_by_id(
+                schedules_collection,
+                schedule_id,
+                not_found_msg="Failed to retrieve updated schedule"
+            )
 
-            # Format shifts array
-            if "shifts" in updated_schedule:
-                formatted_shifts = []
-                for shift in updated_schedule.get("shifts", []):
-                    formatted_shift = dict(shift)
-                    formatted_shift["_id"] = IdHandler.id_to_str(shift.get("_id"))
-                    formatted_shift["employee_id"] = IdHandler.id_to_str(shift.get("employee_id"))
-                    formatted_shifts.append(formatted_shift)
-                formatted_schedule["shifts"] = formatted_shifts
-
-            # Add store name
-            store = await stores_collection.find_one({"_id": updated_schedule.get("store_id")})
-            if store:
-                formatted_schedule["store_name"] = store.get("name")
-
-            # Get names of employees in shifts efficiently
-            employee_names = {}
-            if "shifts" in updated_schedule:
-                employee_ids = set()
-                for shift in updated_schedule.get("shifts", []):
-                    emp_id = shift.get("employee_id")
-                    if emp_id:
-                        employee_ids.add(IdHandler.id_to_str(emp_id))
-
-                for emp_id in employee_ids:
-                    employee, _ = await IdHandler.find_document_by_id(
-                        employees_collection,
-                        emp_id,
-                        not_found_msg=f"Employee not found for ID: {emp_id}"
-                    )
-
-                    if employee and employee.get("user_id"):
-                        from app.services.user import get_user_by_id
-                        user = await get_user_by_id(employee.get("user_id"))
-                        if user:
-                            employee_names[emp_id] = user.get("full_name")
-
-            formatted_schedule["employee_names"] = employee_names
-
-            return formatted_schedule
+            # Format all IDs consistently
+            return IdHandler.format_object_ids(updated_schedule)
         except ValueError as e:
             print(f"Validation error updating shift: {str(e)}")
             raise HTTPException(
@@ -782,13 +642,9 @@ class ScheduleService:
 
     @staticmethod
     async def delete_shift(schedule_id: str, shift_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Delete a shift from a schedule with standardized ID handling
-        """
+        """Delete a shift from a schedule using IdHandler"""
         try:
-            print(f"Deleting shift {shift_id} from schedule {schedule_id}")
-
-            # Find the schedule using centralized ID handler
+            # Find schedule using IdHandler
             schedule, schedule_obj_id = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
@@ -798,26 +654,43 @@ class ScheduleService:
             if not schedule:
                 return None
 
-            # Update the schedule's updated_at timestamp and pull the shift
+            # Check if shift exists
+            shift_exists = False
+            for shift in schedule.get("shifts", []):
+                if IdHandler.id_to_str(shift.get("_id")) == shift_id:
+                    shift_exists = True
+                    break
+
+            if not shift_exists:
+                raise ValueError(f"Shift with ID {shift_id} not found in schedule {schedule_id}")
+
+            # Remove the shift from the schedule
             update_result = await schedules_collection.update_one(
                 {"_id": schedule_obj_id},
                 {
-                    "$set": {"updated_at": datetime.utcnow()},
-                    "$pull": {"shifts": {"_id": shift_id}}
+                    "$pull": {"shifts": {"_id": shift_id}},
+                    "$set": {"updated_at": datetime.utcnow()}
                 }
             )
 
             if update_result.matched_count == 0:
                 return None
 
-            # Get the updated schedule using our standardized method
+            # Get the updated schedule using IdHandler
             updated_schedule, _ = await IdHandler.find_document_by_id(
                 schedules_collection,
                 schedule_id,
-                not_found_msg=f"Failed to retrieve updated schedule"
+                not_found_msg="Failed to retrieve updated schedule"
             )
 
-            return updated_schedule
+            # Format all IDs consistently
+            return IdHandler.format_object_ids(updated_schedule)
+        except ValueError as e:
+            print(f"Validation error deleting shift: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
         except Exception as e:
             print(f"Error deleting shift: {str(e)}")
             raise HTTPException(
@@ -826,18 +699,13 @@ class ScheduleService:
             )
 
     @staticmethod
-    async def get_employee_shifts(
+    async def get_employee_schedule(
             employee_id: str,
-            start_date: Optional[str] = None,
-            end_date: Optional[str] = None
+            week_start_date: Optional[date] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Get all shifts for an employee across schedules with standardized ID handling
-        """
+        """Get all shifts for an employee using IdHandler"""
         try:
-            print(f"Getting shifts for employee {employee_id} from {start_date} to {end_date}")
-
-            # Validate employee exists using centralized ID handler
+            # Validate employee exists using IdHandler
             employee, employee_obj_id = await IdHandler.find_document_by_id(
                 employees_collection,
                 employee_id,
@@ -847,69 +715,47 @@ class ScheduleService:
             if not employee:
                 return []
 
-            # Build the query
-            query = {}
-
-            if start_date or end_date:
-                date_filter = {}
-                if start_date:
-                    date_filter["$gte"] = start_date
-                if end_date:
-                    date_filter["$lte"] = end_date
-
-                if start_date and end_date:
-                    # Either start_date is within range or end_date is within range
-                    query["$or"] = [
-                        {"start_date": date_filter},
-                        {"end_date": date_filter},
-                        # Or the range completely contains our range
-                        {
-                            "start_date": {"$lte": start_date},
-                            "end_date": {"$gte": end_date}
-                        }
-                    ]
-                else:
-                    if start_date:
-                        query["end_date"] = {"$gte": start_date}
-                    if end_date:
-                        query["start_date"] = {"$lte": end_date}
-
-            # Get all schedules matching the date range
-            schedules = await schedules_collection.find(query).to_list(length=100)
-
-            # Extract shifts for the employee
-            employee_shifts = []
+            # Standardize employee ID
             employee_id_str = IdHandler.id_to_str(employee_obj_id)
 
+            # Calculate current week's start date if not provided
+            if not week_start_date:
+                today = datetime.utcnow().date()
+                days_since_monday = today.weekday()  # Monday is 0, Sunday is 6
+                week_start_date = today - timedelta(days=days_since_monday)
+
+            # Convert to datetime for MongoDB query
+            week_start_datetime = datetime.combine(week_start_date, datetime.min.time())
+
+            # Find all schedules that might contain this employee's shifts
+            schedules = await schedules_collection.find({
+                "week_start_date": week_start_datetime
+            }).to_list(length=100)
+
+            # Extract shifts for this employee
+            employee_shifts = []
             for schedule in schedules:
-                schedule_info = {
-                    "schedule_id": IdHandler.id_to_str(schedule["_id"]),
-                    "schedule_title": schedule.get("title", "Untitled Schedule"),
-                    "store_id": IdHandler.id_to_str(schedule.get("store_id")),
-                    "store_name": None
-                }
-
-                # Get store info using centralized ID handler
-                if schedule.get("store_id"):
-                    store, _ = await IdHandler.find_document_by_id(
-                        stores_collection,
-                        schedule.get("store_id"),
-                        not_found_msg=f"Store not found for ID: {schedule.get('store_id')}"
-                    )
-
-                    if store:
-                        schedule_info["store_name"] = store.get("name")
-
-                # Find shifts for this employee
                 for shift in schedule.get("shifts", []):
-                    shift_emp_id = IdHandler.id_to_str(shift.get("employee_id"))
-                    if shift_emp_id == employee_id_str:
-                        # Add schedule info to the shift
-                        shift_with_info = dict(shift)
-                        shift_with_info.update(schedule_info)
-                        employee_shifts.append(shift_with_info)
+                    if IdHandler.id_to_str(shift.get("employee_id")) == employee_id_str:
+                        shift_info = dict(shift)
+                        shift_info["schedule_id"] = IdHandler.id_to_str(schedule.get("_id"))
+                        shift_info["schedule_title"] = schedule.get("title")
+                        shift_info["store_id"] = IdHandler.id_to_str(schedule.get("store_id"))
 
-            return IdHandler.format_object_ids(employee_shifts)
+                        store, _ = await IdHandler.find_document_by_id(
+                            stores_collection,
+                            schedule.get("store_id"),
+                            not_found_msg=f"Store not found for ID: {schedule.get('store_id')}"
+                        )
+
+                        if store:
+                            shift_info["store_name"] = store.get("name")
+
+                        # Format all IDs consistently
+                        shift_info = IdHandler.format_object_ids(shift_info)
+                        employee_shifts.append(shift_info)
+
+            return employee_shifts
         except Exception as e:
-            print(f"Error getting employee shifts: {str(e)}")
+            print(f"Error getting employee schedule: {str(e)}")
             return []

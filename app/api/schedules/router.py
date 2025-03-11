@@ -1,333 +1,233 @@
 # app/api/schedules/router.py
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from datetime import date
 
 from app.dependencies.permissions import get_current_user, has_permission
-from app.schemas.schedule import ScheduleCreate, ScheduleUpdate, ScheduleResponse, ScheduleWithDetails
-from app.schemas.schedule import ScheduleShiftCreate, ScheduleShiftUpdate, ScheduleShiftResponse
+from app.schemas.schedule import (
+    ScheduleCreate, ScheduleUpdate, ScheduleResponse, ScheduleWithDetails,
+    ScheduleSummary, ShiftCreate, ShiftUpdate, ShiftResponse
+)
 from app.services.schedule import ScheduleService
-from app.utils.id_handler import IdHandler
 
 router = APIRouter()
 
 
-@router.get("/", response_model=List[ScheduleWithDetails])
+@router.get("/", response_model=List[ScheduleSummary])
 async def get_schedules(
         skip: int = 0,
         limit: int = 100,
         store_id: Optional[str] = None,
-        employee_id: Optional[str] = None,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-        current_user: Dict[str, Any] = Depends(has_permission("stores:read"))
+        week_start_date: Optional[date] = None,
+        current_user: dict = Depends(has_permission("stores:read"))
 ):
     """
     Get all schedules with optional filtering
     """
-    try:
-        print(f"Getting schedules with filters: store_id={store_id}, employee_id={employee_id}, "
-              f"start_date={start_date}, end_date={end_date}")
-
-        # Convert dates to string format if provided
-        start_date_str = start_date.isoformat() if start_date else None
-        end_date_str = end_date.isoformat() if end_date else None
-
-        return await ScheduleService.get_schedules(
-            skip=skip,
-            limit=limit,
-            store_id=store_id,
-            employee_id=employee_id,
-            start_date=start_date_str,
-            end_date=end_date_str
-        )
-    except Exception as e:
-        print(f"Error getting schedules: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error getting schedules: {str(e)}"
-        )
+    return await ScheduleService.get_schedules(
+        skip=skip,
+        limit=limit,
+        store_id=store_id,
+        week_start_date=week_start_date
+    )
 
 
 @router.get("/{schedule_id}", response_model=ScheduleWithDetails)
 async def get_schedule(
         schedule_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("stores:read"))
+        current_user: dict = Depends(has_permission("stores:read"))
 ):
     """
     Get schedule by ID
     """
-    try:
-        print(f"Getting schedule with ID: {schedule_id}")
-        schedule = await ScheduleService.get_schedule(schedule_id)
+    schedule = await ScheduleService.get_schedule(schedule_id)
 
-        # Use the helper method to raise a consistent 404 error if not found
-        IdHandler.raise_if_not_found(
-            schedule,
-            f"Schedule with ID {schedule_id} not found",
-            status.HTTP_404_NOT_FOUND
-        )
-
-        return schedule
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error getting schedule: {str(e)}")
+    if not schedule:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error getting schedule: {str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule with ID {schedule_id} not found"
         )
+
+    return schedule
 
 
 @router.post("/", response_model=ScheduleResponse, status_code=status.HTTP_201_CREATED)
 async def create_schedule(
         schedule: ScheduleCreate,
-        current_user: Dict[str, Any] = Depends(has_permission("stores:write"))
+        current_user: dict = Depends(has_permission("stores:write"))
 ):
     """
-    Create new schedule
+    Create a new schedule
     """
-    try:
-        print(f"Creating schedule: {schedule.title}")
+    # Add the current user as creator
+    schedule_data = schedule.model_dump()
+    schedule_data["created_by"] = str(current_user["_id"])
 
-        # Convert to dict and add created_by field
-        schedule_data = schedule.model_dump()
-        schedule_data["created_by"] = str(current_user["_id"])
-
-        return await ScheduleService.create_schedule(schedule_data)
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error creating schedule: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating schedule: {str(e)}"
-        )
+    return await ScheduleService.create_schedule(schedule_data)
 
 
 @router.put("/{schedule_id}", response_model=ScheduleResponse)
 async def update_schedule(
         schedule_id: str,
         schedule: ScheduleUpdate,
-        current_user: Dict[str, Any] = Depends(has_permission("stores:write"))
+        current_user: dict = Depends(has_permission("stores:write"))
 ):
     """
-    Update existing schedule
+    Update a schedule
     """
-    try:
-        print(f"Updating schedule with ID: {schedule_id}")
+    updated_schedule = await ScheduleService.update_schedule(
+        schedule_id=schedule_id,
+        schedule_data=schedule.model_dump(exclude_unset=True)
+    )
 
-        # Get update data excluding unset fields
-        update_data = schedule.model_dump(exclude_unset=True)
-
-        updated_schedule = await ScheduleService.update_schedule(schedule_id, update_data)
-
-        # Use the helper method to raise a consistent 404 error if not found
-        IdHandler.raise_if_not_found(
-            updated_schedule,
-            f"Schedule with ID {schedule_id} not found",
-            status.HTTP_404_NOT_FOUND
-        )
-
-        return updated_schedule
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error updating schedule: {str(e)}")
+    if not updated_schedule:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating schedule: {str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule with ID {schedule_id} not found"
         )
+
+    return updated_schedule
 
 
 @router.delete("/{schedule_id}", response_model=bool)
 async def delete_schedule(
         schedule_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("stores:delete"))
+        current_user: dict = Depends(has_permission("stores:delete"))
 ):
     """
-    Delete schedule
+    Delete a schedule
     """
-    try:
-        print(f"Deleting schedule with ID: {schedule_id}")
+    result = await ScheduleService.delete_schedule(schedule_id)
 
-        # Check if schedule exists first
-        schedule = await ScheduleService.get_schedule(schedule_id)
-        IdHandler.raise_if_not_found(
-            schedule,
-            f"Schedule with ID {schedule_id} not found",
-            status.HTTP_404_NOT_FOUND
-        )
-
-        result = await ScheduleService.delete_schedule(schedule_id)
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error deleting schedule: {str(e)}")
+    if not result:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting schedule: {str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule with ID {schedule_id} not found"
         )
+
+    return result
 
 
 @router.post("/{schedule_id}/shifts", response_model=ScheduleResponse)
 async def add_shift(
         schedule_id: str,
-        shift: ScheduleShiftCreate,
-        current_user: Dict[str, Any] = Depends(has_permission("stores:write"))
+        shift: ShiftCreate,
+        current_user: dict = Depends(has_permission("stores:write"))
 ):
     """
     Add a shift to a schedule
     """
-    try:
-        print(f"Adding shift to schedule {schedule_id}")
+    updated_schedule = await ScheduleService.add_shift(
+        schedule_id=schedule_id,
+        shift_data=shift.model_dump()
+    )
 
-        # Convert shift to dict
-        shift_data = shift.model_dump()
-
-        updated_schedule = await ScheduleService.add_shift(schedule_id, shift_data)
-
-        # Raise 404 if schedule not found
-        IdHandler.raise_if_not_found(
-            updated_schedule,
-            f"Schedule with ID {schedule_id} not found",
-            status.HTTP_404_NOT_FOUND
-        )
-
-        return updated_schedule
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error adding shift: {str(e)}")
+    if not updated_schedule:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error adding shift: {str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule with ID {schedule_id} not found"
         )
+
+    return updated_schedule
 
 
 @router.put("/{schedule_id}/shifts/{shift_id}", response_model=ScheduleResponse)
 async def update_shift(
         schedule_id: str,
         shift_id: str,
-        shift: ScheduleShiftUpdate,
-        current_user: Dict[str, Any] = Depends(has_permission("stores:write"))
+        shift: ShiftUpdate,
+        current_user: dict = Depends(has_permission("stores:write"))
 ):
     """
     Update a shift in a schedule
     """
-    try:
-        print(f"Updating shift {shift_id} in schedule {schedule_id}")
+    updated_schedule = await ScheduleService.update_shift(
+        schedule_id=schedule_id,
+        shift_id=shift_id,
+        shift_data=shift.model_dump(exclude_unset=True)
+    )
 
-        # Get update data excluding unset fields
-        update_data = shift.model_dump(exclude_unset=True)
-
-        updated_schedule = await ScheduleService.update_shift(schedule_id, shift_id, update_data)
-
-        # Raise 404 if schedule or shift not found
-        IdHandler.raise_if_not_found(
-            updated_schedule,
-            f"Schedule with ID {schedule_id} or shift with ID {shift_id} not found",
-            status.HTTP_404_NOT_FOUND
-        )
-
-        return updated_schedule
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error updating shift: {str(e)}")
+    if not updated_schedule:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating shift: {str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule with ID {schedule_id} or shift with ID {shift_id} not found"
         )
+
+    return updated_schedule
 
 
 @router.delete("/{schedule_id}/shifts/{shift_id}", response_model=ScheduleResponse)
 async def delete_shift(
         schedule_id: str,
         shift_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("stores:write"))
+        current_user: dict = Depends(has_permission("stores:write"))
 ):
     """
     Delete a shift from a schedule
     """
-    try:
-        print(f"Deleting shift {shift_id} from schedule {schedule_id}")
+    updated_schedule = await ScheduleService.delete_shift(
+        schedule_id=schedule_id,
+        shift_id=shift_id
+    )
 
-        updated_schedule = await ScheduleService.delete_shift(schedule_id, shift_id)
-
-        # Raise 404 if schedule or shift not found
-        IdHandler.raise_if_not_found(
-            updated_schedule,
-            f"Schedule with ID {schedule_id} or shift with ID {shift_id} not found",
-            status.HTTP_404_NOT_FOUND
-        )
-
-        return updated_schedule
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error deleting shift: {str(e)}")
+    if not updated_schedule:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting shift: {str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule with ID {schedule_id} or shift with ID {shift_id} not found"
         )
 
+    return updated_schedule
 
-@router.get("/employee/{employee_id}/shifts", response_model=List[Dict[str, Any]])
-async def get_employee_shifts(
-        employee_id: str,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-        current_user: Dict[str, Any] = Depends(has_permission("hours:read"))
+
+@router.get("/employee/me", response_model=List[dict])
+async def get_my_schedule(
+        week_start_date: Optional[date] = None,
+        current_user: dict = Depends(get_current_user)
 ):
     """
-    Get all shifts for an employee
+    Get current user's schedule
     """
-    try:
-        print(f"Getting shifts for employee {employee_id} from {start_date} to {end_date}")
+    # Get employee ID for current user
+    from app.services.employee import EmployeeService
+    employee = await EmployeeService.get_employee_by_user_id(str(current_user["_id"]))
 
-        # Convert dates to string format if provided
-        start_date_str = start_date.isoformat() if start_date else None
-        end_date_str = end_date.isoformat() if end_date else None
-
-        # Get shifts for the employee
-        shifts = await ScheduleService.get_employee_shifts(employee_id, start_date_str, end_date_str)
-
-        return shifts
-    except Exception as e:
-        print(f"Error getting employee shifts: {str(e)}")
+    if not employee:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error getting employee shifts: {str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Employee profile not found"
         )
 
+    return await ScheduleService.get_employee_schedule(
+        employee_id=str(employee["_id"]),
+        week_start_date=week_start_date
+    )
 
-@router.get("/store/{store_id}", response_model=List[ScheduleWithDetails])
+
+@router.get("/employee/{employee_id}", response_model=List[dict])
+async def get_employee_schedule(
+        employee_id: str,
+        week_start_date: Optional[date] = None,
+        current_user: dict = Depends(has_permission("stores:read"))
+):
+    """
+    Get employee's schedule
+    """
+    return await ScheduleService.get_employee_schedule(
+        employee_id=employee_id,
+        week_start_date=week_start_date
+    )
+
+
+@router.get("/store/{store_id}", response_model=List[ScheduleSummary])
 async def get_store_schedules(
         store_id: str,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-        current_user: Dict[str, Any] = Depends(has_permission("stores:read"))
+        week_start_date: Optional[date] = None,
+        current_user: dict = Depends(has_permission("stores:read"))
 ):
     """
     Get all schedules for a store
     """
-    try:
-        print(f"Getting schedules for store {store_id} from {start_date} to {end_date}")
-
-        # Convert dates to string format if provided
-        start_date_str = start_date.isoformat() if start_date else None
-        end_date_str = end_date.isoformat() if end_date else None
-
-        return await ScheduleService.get_schedules(
-            store_id=store_id,
-            start_date=start_date_str,
-            end_date=end_date_str
-        )
-    except Exception as e:
-        print(f"Error getting store schedules: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error getting store schedules: {str(e)}"
-        )
+    return await ScheduleService.get_schedules(
+        store_id=store_id,
+        week_start_date=week_start_date
+    )

@@ -1,68 +1,63 @@
 # app/schemas/timesheet.py
-from typing import List, Optional, Dict
+from typing import Dict, Optional, List
+from datetime import date, datetime
 from pydantic import BaseModel, Field, validator
-from datetime import datetime
-import re
 from app.models.timesheet import TimesheetStatus
 
 
+class DailyHoursUpdate(BaseModel):
+    """Schema for updating hours for a specific day"""
+    day: str
+    hours: float
+
+    @validator('day')
+    def validate_day(cls, day):
+        valid_days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        day_lower = day.lower()
+        if day_lower not in valid_days:
+            raise ValueError(f"Invalid day: {day}. Must be one of {valid_days}")
+        return day_lower
+
+    @validator('hours')
+    def validate_hours(cls, hours):
+        if hours < 0:
+            raise ValueError("Hours cannot be negative")
+        if hours > 24:
+            raise ValueError("Hours cannot exceed 24 per day")
+        return hours
+
+
 class TimesheetCreate(BaseModel):
-    """Schema for creating timesheets"""
+    """Schema for creating a new timesheet"""
     employee_id: str
     store_id: str
-    week_start_date: str  # ISO date string YYYY-MM-DD
-    week_end_date: str  # ISO date string YYYY-MM-DD
-    time_entries: List[str] = []  # Array of TimeEntry IDs
-    total_hours: float
+    week_start_date: date
+    daily_hours: Optional[Dict[str, float]] = None
+    hourly_rate: float  # Copy from employee at creation time
     notes: Optional[str] = None
-
-    @validator('week_start_date', 'week_end_date')
-    def validate_date_format(cls, v):
-        if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
-            raise ValueError('Date must be in YYYY-MM-DD format')
-        return v
-
-    @validator('week_end_date')
-    def validate_end_date_after_start_date(cls, v, values):
-        if 'week_start_date' in values and v < values['week_start_date']:
-            raise ValueError('End date must be on or after start date')
-        return v
-
-    @validator('total_hours')
-    def validate_total_hours(cls, v):
-        if v < 0:
-            raise ValueError('Total hours must be non-negative')
-        return v
 
 
 class TimesheetUpdate(BaseModel):
-    """Schema for updating timesheets"""
-    time_entries: Optional[List[str]] = None  # Array of TimeEntry IDs
-    total_hours: Optional[float] = None
+    """Schema for updating an existing timesheet"""
+    daily_hours: Optional[Dict[str, float]] = None
     notes: Optional[str] = None
-
-    @validator('total_hours')
-    def validate_total_hours(cls, v):
-        if v is not None and v < 0:
-            raise ValueError('Total hours must be non-negative')
-        return v
 
 
 class TimesheetSubmit(BaseModel):
-    """Schema for submitting timesheets"""
+    """Schema for submitting a timesheet for approval"""
     notes: Optional[str] = None
 
 
 class TimesheetApproval(BaseModel):
-    """Schema for approving/rejecting timesheets"""
-    status: TimesheetStatus
+    """Schema for approving or rejecting a timesheet"""
+    status: str  # "approved" or "rejected"
     notes: Optional[str] = None
 
     @validator('status')
-    def validate_status(cls, v):
-        if v not in [TimesheetStatus.APPROVED, TimesheetStatus.REJECTED]:
-            raise ValueError('Status must be either approved or rejected')
-        return v
+    def validate_status(cls, status):
+        if status not in ['approved', 'rejected']:
+            raise ValueError("Status must be either 'approved' or 'rejected'")
+        return status
 
 
 class TimesheetResponse(BaseModel):
@@ -70,16 +65,19 @@ class TimesheetResponse(BaseModel):
     id: str = Field(..., alias="_id")
     employee_id: str
     store_id: str
-    week_start_date: str  # ISO date string YYYY-MM-DD
-    week_end_date: str  # ISO date string YYYY-MM-DD
-    time_entries: List[str]  # Array of TimeEntry IDs
+    week_start_date: date
+    week_end_date: date
+    daily_hours: Dict[str, float]
     total_hours: float
+    hourly_rate: float
+    total_earnings: float
     status: str
+    notes: Optional[str] = None
     submitted_at: Optional[datetime] = None
+    submitted_by: Optional[str] = None
     approved_by: Optional[str] = None
     approved_at: Optional[datetime] = None
     rejection_reason: Optional[str] = None
-    notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -93,4 +91,23 @@ class TimesheetWithDetails(TimesheetResponse):
     """Schema for timesheet with employee and store information"""
     employee_name: Optional[str] = None
     store_name: Optional[str] = None
-    time_entry_details: Optional[List[Dict]] = None  # Details of time entries
+
+
+class TimesheetSummary(BaseModel):
+    """Schema for timesheet summary (used in listings)"""
+    id: str = Field(..., alias="_id")
+    employee_id: str
+    employee_name: Optional[str] = None
+    store_id: str
+    store_name: Optional[str] = None
+    week_start_date: date
+    week_end_date: date
+    total_hours: float
+    total_earnings: float
+    status: str
+    submitted_at: Optional[datetime] = None
+
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True
+    }

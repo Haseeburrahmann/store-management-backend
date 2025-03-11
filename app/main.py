@@ -7,7 +7,6 @@ from app.api.users import router as users_router
 from app.api.roles import router as roles_router
 from app.api.stores.router import router as stores_router
 from app.api.employees.router import router as employee_router
-from app.api.hours.router import router as hours_router
 from app.api.schedules.router import router as schedules_router
 from app.api.timesheets.router import router as timesheets_router
 from app.core.config import settings
@@ -35,7 +34,6 @@ app.include_router(users_router.router, prefix=f"{settings.API_V1_STR}/users", t
 app.include_router(roles_router.router, prefix=f"{settings.API_V1_STR}/roles", tags=["roles"])
 app.include_router(stores_router, prefix=f"{settings.API_V1_STR}/stores", tags=["stores"])
 app.include_router(employee_router, prefix=f"{settings.API_V1_STR}/employees", tags=["employees"])
-app.include_router(hours_router, prefix=f"{settings.API_V1_STR}/hours", tags=["hours"])
 app.include_router(schedules_router, prefix=f"{settings.API_V1_STR}/schedules", tags=["schedules"])
 app.include_router(timesheets_router, prefix=f"{settings.API_V1_STR}/timesheets", tags=["timesheets"])
 
