@@ -28,9 +28,6 @@ def get_stores_collection():
 def get_employees_collection():
     return database.employees
 
-def get_hours_collection():
-    return database.hours
-
 def get_schedules_collection():
     return database.schedules
 

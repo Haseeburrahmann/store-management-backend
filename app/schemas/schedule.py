@@ -1,68 +1,76 @@
 # app/schemas/schedule.py
-from typing import List, Optional
+from typing import Optional, List, Dict
+from datetime import date, datetime
 from pydantic import BaseModel, Field, validator
-from datetime import datetime, date
-import re
 
 
-class ScheduleShiftCreate(BaseModel):
-    """Schema for creating schedule shifts"""
+class ShiftCreate(BaseModel):
+    """Schema for creating a shift"""
     employee_id: str
-    date: str  # ISO date string YYYY-MM-DD
-    start_time: str  # Time in format HH:MM (24-hour)
-    end_time: str  # Time in format HH:MM (24-hour)
+    day_of_week: str  # "monday", "tuesday", etc.
+    start_time: str   # "09:00" format
+    end_time: str     # "17:00" format
     notes: Optional[str] = None
 
-    @validator('date')
-    def validate_date_format(cls, v):
-        if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
-            raise ValueError('Date must be in YYYY-MM-DD format')
-        return v
+    @validator('day_of_week')
+    def validate_day_of_week(cls, day):
+        valid_days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        day_lower = day.lower()
+        if day_lower not in valid_days:
+            raise ValueError(f"Invalid day of week: {day}. Must be one of {valid_days}")
+        return day_lower
 
     @validator('start_time', 'end_time')
-    def validate_time_format(cls, v):
-        if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', v):
-            raise ValueError('Time must be in HH:MM format (24-hour)')
-        return v
+    def validate_time_format(cls, time_str):
+        import re
+        if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', time_str):
+            raise ValueError(f"Time must be in HH:MM format (24-hour): {time_str}")
+        return time_str
 
     @validator('end_time')
-    def validate_end_time_after_start_time(cls, v, values):
-        if 'start_time' in values and v <= values['start_time']:
-            raise ValueError('End time must be after start time')
-        return v
+    def validate_end_after_start(cls, end_time, values):
+        if 'start_time' in values and end_time <= values['start_time']:
+            raise ValueError("End time must be after start time")
+        return end_time
 
 
-class ScheduleShiftUpdate(BaseModel):
-    """Schema for updating schedule shifts"""
+class ShiftUpdate(BaseModel):
+    """Schema for updating a shift"""
     employee_id: Optional[str] = None
-    date: Optional[str] = None  # ISO date string YYYY-MM-DD
-    start_time: Optional[str] = None  # Time in format HH:MM (24-hour)
-    end_time: Optional[str] = None  # Time in format HH:MM (24-hour)
+    day_of_week: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
     notes: Optional[str] = None
 
-    @validator('date')
-    def validate_date_format(cls, v):
-        if v and not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
-            raise ValueError('Date must be in YYYY-MM-DD format')
-        return v
+    @validator('day_of_week')
+    def validate_day_of_week(cls, day):
+        if day is None:
+            return day
+        valid_days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        day_lower = day.lower()
+        if day_lower not in valid_days:
+            raise ValueError(f"Invalid day of week: {day}. Must be one of {valid_days}")
+        return day_lower
 
     @validator('start_time', 'end_time')
-    def validate_time_format(cls, v):
-        if v and not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', v):
-            raise ValueError('Time must be in HH:MM format (24-hour)')
-        return v
+    def validate_time_format(cls, time_str):
+        if time_str is None:
+            return time_str
+        import re
+        if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', time_str):
+            raise ValueError(f"Time must be in HH:MM format (24-hour): {time_str}")
+        return time_str
 
 
-class ScheduleShiftResponse(BaseModel):
-    """Schema for schedule shift responses"""
-    # Fix for the "_id is required" error:
-    # Make ID field have a default value if it's missing
-    id: str = Field(default_factory=lambda: str(datetime.now().timestamp()), alias="_id")
+class ShiftResponse(BaseModel):
+    """Schema for shift responses"""
+    id: str = Field(..., alias="_id")
     employee_id: str
-    date: str  # ISO date string YYYY-MM-DD
-    start_time: str  # Time in format HH:MM (24-hour)
-    end_time: str  # Time in format HH:MM (24-hour)
+    day_of_week: str
+    start_time: str
+    end_time: str
     notes: Optional[str] = None
+    employee_name: Optional[str] = None  # Added for convenience
 
     model_config = {
         "populate_by_name": True,
@@ -71,48 +79,27 @@ class ScheduleShiftResponse(BaseModel):
 
 
 class ScheduleCreate(BaseModel):
-    """Schema for creating schedules"""
-    title: str
+    """Schema for creating a schedule"""
     store_id: str
-    start_date: str  # ISO date string YYYY-MM-DD
-    end_date: str  # ISO date string YYYY-MM-DD
-    shifts: List[ScheduleShiftCreate] = []
-
-    @validator('start_date', 'end_date')
-    def validate_date_format(cls, v):
-        if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
-            raise ValueError('Date must be in YYYY-MM-DD format')
-        return v
-
-    @validator('end_date')
-    def validate_end_date_after_start_date(cls, v, values):
-        if 'start_date' in values and v < values['start_date']:
-            raise ValueError('End date must be on or after start date')
-        return v
+    title: str
+    week_start_date: date
+    shifts: Optional[List[ShiftCreate]] = None
 
 
 class ScheduleUpdate(BaseModel):
-    """Schema for updating schedules"""
+    """Schema for updating a schedule"""
     title: Optional[str] = None
-    store_id: Optional[str] = None
-    start_date: Optional[str] = None  # ISO date string YYYY-MM-DD
-    end_date: Optional[str] = None  # ISO date string YYYY-MM-DD
-
-    @validator('start_date', 'end_date')
-    def validate_date_format(cls, v):
-        if v and not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
-            raise ValueError('Date must be in YYYY-MM-DD format')
-        return v
+    shifts: Optional[List[ShiftCreate]] = None
 
 
 class ScheduleResponse(BaseModel):
     """Schema for schedule responses"""
     id: str = Field(..., alias="_id")
-    title: str
     store_id: str
-    start_date: str  # ISO date string YYYY-MM-DD
-    end_date: str  # ISO date string YYYY-MM-DD
-    shifts: List[ScheduleShiftResponse]
+    title: str
+    week_start_date: date
+    week_end_date: date
+    shifts: List[ShiftResponse]
     created_by: str
     created_at: datetime
     updated_at: datetime
@@ -124,6 +111,23 @@ class ScheduleResponse(BaseModel):
 
 
 class ScheduleWithDetails(ScheduleResponse):
-    """Schema for schedule with store and employee information"""
+    """Schema for schedule with additional details"""
     store_name: Optional[str] = None
-    employee_names: Optional[dict] = None
+    created_by_name: Optional[str] = None
+
+
+class ScheduleSummary(BaseModel):
+    """Schema for schedule summary (used in listings)"""
+    id: str = Field(..., alias="_id")
+    store_id: str
+    store_name: Optional[str] = None
+    title: str
+    week_start_date: date
+    week_end_date: date
+    shift_count: int
+    created_at: datetime
+
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True
+    }
