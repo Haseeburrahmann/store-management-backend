@@ -29,16 +29,47 @@ class TimesheetService:
     ) -> List[Dict[str, Any]]:
         """Get timesheets with optional filtering"""
         try:
+            print("==== TIMESHEET QUERY ====")
+            print(f"Employee ID: {employee_id} (type: {type(employee_id)})")
+            print(f"Store ID: {store_id}")
+            print(f"Status: {status}")
+            print(f"Date range: {start_date} to {end_date}")
+
             query = {}
 
             if employee_id:
-                query["employee_id"] = employee_id
+                # Try to normalize the employee_id format
+                try:
+                    from bson import ObjectId
+                    if not isinstance(employee_id, ObjectId) and ObjectId.is_valid(employee_id):
+                        formatted_id = ObjectId(employee_id)
+                        print(f"Converted employee_id to ObjectId: {formatted_id}")
+                        query["employee_id"] = formatted_id
+                    else:
+                        print(f"Using employee_id as is: {employee_id}")
+                        query["employee_id"] = employee_id
+                except ImportError:
+                    # If bson is not available, use as string
+                    query["employee_id"] = employee_id
+                    print(f"Using employee_id as string: {employee_id}")
 
             if store_id:
-                query["store_id"] = store_id
+                try:
+                    from bson import ObjectId
+                    if not isinstance(store_id, ObjectId) and ObjectId.is_valid(store_id):
+                        query["store_id"] = ObjectId(store_id)
+                    else:
+                        query["store_id"] = store_id
+                except ImportError:
+                    query["store_id"] = store_id
 
             if status:
-                query["status"] = status
+                # Handle multiple status values (comma-separated)
+                if ',' in status:
+                    statuses = [s.strip() for s in status.split(',')]
+                    query["status"] = {"$in": statuses}
+                else:
+                    query["status"] = status
 
             if start_date:
                 # Convert date to datetime for MongoDB query
@@ -48,15 +79,30 @@ class TimesheetService:
             if end_date:
                 # Convert date to datetime for MongoDB query
                 end_datetime = datetime.combine(end_date, datetime.min.time())
-                if "week_start_date" in query:
-                    query["week_start_date"]["$lte"] = end_datetime
-                else:
-                    query["week_start_date"] = {"$lte": end_datetime}
+                query["week_start_date"] = {"$lte": end_datetime}
 
+            print(f"Final MongoDB query: {query}")
+            # Print the raw query for debugging
+            import json
+            try:
+                print(f"Query as JSON: {json.dumps(query, default=str)}")
+            except:
+                print("Could not serialize query to JSON")
+
+            # Execute the query
             timesheets = await timesheets_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
+            print(f"Query result count: {len(timesheets)}")
+
+            # Print the first document if available
+            if timesheets and len(timesheets) > 0:
+                print(f"First document: {timesheets[0]}")
+            else:
+                print("No documents found")
+
+            # FIX: Initialize the result list here
+            result = []
 
             # Enrich with employee and store names
-            result = []
             for timesheet in timesheets:
                 timesheet_with_info = dict(timesheet)
 
@@ -89,56 +135,111 @@ class TimesheetService:
                 timesheet_with_info = IdHandler.format_object_ids(timesheet_with_info)
                 result.append(timesheet_with_info)
 
+            print(f"Returning {len(result)} enriched timesheets")
             return result
         except Exception as e:
             print(f"Error getting timesheets: {str(e)}")
-            return []
+            import traceback
+            traceback.print_exc()
+            return []  # Return empty list on error
 
     @staticmethod
     async def get_timesheet(timesheet_id: str) -> Optional[Dict[str, Any]]:
-        """Get a timesheet by ID using IdHandler"""
+        """Get a single timesheet by ID with enriched details"""
         try:
-            # Find timesheet using IdHandler
-            timesheet, _ = await IdHandler.find_document_by_id(
-                timesheets_collection,
-                timesheet_id,
-                not_found_msg=f"Timesheet with ID {timesheet_id} not found"
-            )
+            # Convert string ID to ObjectId for MongoDB
+            from bson import ObjectId
+            if not isinstance(timesheet_id, ObjectId) and ObjectId.is_valid(timesheet_id):
+                object_id = ObjectId(timesheet_id)
+            else:
+                object_id = timesheet_id
+
+            # Get the timesheet from the database
+            timesheet = await timesheets_collection.find_one({"_id": object_id})
 
             if not timesheet:
                 return None
 
-            timesheet_with_info = dict(timesheet)
+            # Create a mutable copy of the timesheet
+            result = dict(timesheet)
 
-            # Get employee info
-            if "employee_id" in timesheet:
-                employee, _ = await IdHandler.find_document_by_id(
-                    employees_collection,
-                    timesheet["employee_id"],
-                    not_found_msg=f"Employee not found for ID: {timesheet['employee_id']}"
-                )
+            # Ensure created_at and updated_at exist
+            if "created_at" not in result:
+                result["created_at"] = datetime.utcnow()
+            if "updated_at" not in result:
+                result["updated_at"] = datetime.utcnow()
 
-                if employee and "user_id" in employee:
-                    from app.services.user import get_user_by_id
-                    user = await get_user_by_id(employee["user_id"])
-                    if user:
-                        timesheet_with_info["employee_name"] = user["full_name"]
+            # Format ObjectId to string
+            result["_id"] = str(result["_id"])
 
-            # Get store info
-            if "store_id" in timesheet:
-                store, _ = await IdHandler.find_document_by_id(
-                    stores_collection,
-                    timesheet["store_id"],
-                    not_found_msg=f"Store not found for ID: {timesheet['store_id']}"
-                )
+            # Add employee name if possible
+            if "employee_id" in result:
+                employee_id = result["employee_id"]
+                # Convert to string if needed
+                if isinstance(employee_id, ObjectId):
+                    employee_id = str(employee_id)
+                    result["employee_id"] = employee_id
 
+                # Get employee from database
+                from app.services.employee import EmployeeService
+                employee = await EmployeeService.get_employee(employee_id)
+                if employee:
+                    result["employee_name"] = employee.get("full_name") or "Unknown"
+
+            # Add store name if possible
+            if "store_id" in result:
+                store_id = result["store_id"]
+                # Convert to string if needed
+                if isinstance(store_id, ObjectId):
+                    store_id = str(store_id)
+                    result["store_id"] = store_id
+
+                # Get store from database
+                from app.services.store import StoreService
+                store = await StoreService.get_store(store_id)
                 if store:
-                    timesheet_with_info["store_name"] = store["name"]
+                    result["store_name"] = store.get("name") or "Unknown"
 
-            # Format all IDs consistently
-            return IdHandler.format_object_ids(timesheet_with_info)
+            # Convert any remaining ObjectIds to strings
+            for key, value in result.items():
+                if isinstance(value, ObjectId):
+                    result[key] = str(value)
+
+            # Ensure status is a string (not enum)
+            if "status" in result and not isinstance(result["status"], str):
+                result["status"] = str(result["status"])
+
+            # Basic validation - ensure all required fields exist
+            required_fields = [
+                "employee_id", "store_id", "week_start_date", "week_end_date",
+                "daily_hours", "total_hours", "hourly_rate", "total_earnings",
+                "status", "created_at", "updated_at"
+            ]
+
+            for field in required_fields:
+                if field not in result:
+                    print(f"Warning: Missing required field '{field}' in timesheet {timesheet_id}")
+                    # Set default values for missing fields
+                    if field == "daily_hours":
+                        result[field] = {
+                            "monday": 0, "tuesday": 0, "wednesday": 0,
+                            "thursday": 0, "friday": 0, "saturday": 0, "sunday": 0
+                        }
+                    elif field in ["total_hours", "hourly_rate", "total_earnings"]:
+                        result[field] = 0
+                    elif field in ["created_at", "updated_at"]:
+                        result[field] = datetime.utcnow()
+                    elif field == "status":
+                        result[field] = "draft"
+                    else:
+                        result[field] = ""
+
+            return result
+
         except Exception as e:
-            print(f"Error getting timesheet: {str(e)}")
+            print(f"Error getting timesheet {timesheet_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
 
     @staticmethod

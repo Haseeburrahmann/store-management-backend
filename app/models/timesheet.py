@@ -121,3 +121,35 @@ class TimesheetModel(BaseModel):
             }
         }
     }
+
+
+class TimesheetWithDetails(BaseModel):
+    """Response model for the detailed timesheet view"""
+    _id: str
+    employee_id: str
+    employee_name: Optional[str] = None
+    store_id: str
+    store_name: Optional[str] = None
+    week_start_date: date
+    week_end_date: date
+    daily_hours: Dict[str, float]
+    total_hours: float
+    hourly_rate: float
+    total_earnings: float
+    status: str
+    notes: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    submitted_by: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {
+            datetime: lambda v: v.isoformat(),
+            date: lambda v: v.isoformat(),
+        }
+    }

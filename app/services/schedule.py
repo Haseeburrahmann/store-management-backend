@@ -45,6 +45,12 @@ class ScheduleService:
             for schedule in schedules:
                 schedule_with_info = dict(schedule)
 
+                # Add shift_count field for ScheduleSummary
+                if "shifts" in schedule:
+                    schedule_with_info["shift_count"] = len(schedule["shifts"])
+                else:
+                    schedule_with_info["shift_count"] = 0
+
                 # Get store info if requested
                 if include_details and "store_id" in schedule:
                     store, _ = await IdHandler.find_document_by_id(
