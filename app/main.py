@@ -22,7 +22,11 @@ app = FastAPI(
 # Set up CORS - Updated to be more permissive
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4200", "https://store-management-frontend-1xuz.vercel.app","https://web-production-7f210.up.railway.app"],
+    allow_origins=[
+        "http://localhost:4200",
+        "https://*.vercel.app",  # This will allow all Vercel deployments
+        "https://web-production-7f210.up.railway.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
