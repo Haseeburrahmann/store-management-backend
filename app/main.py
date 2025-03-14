@@ -87,3 +87,14 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "version": "1.0.0"}
+
+@app.get("/debug-env")
+async def debug_env():
+    """Debug endpoint to check environment variables"""
+    import os
+    return {
+        "MONGODB_URL": os.environ.get("MONGODB_URL", "not set"),
+        "MONGODB_DB": os.environ.get("MONGODB_DB", "not set"),
+        "settings.database_url": settings.database_url,
+        "settings.database_name": settings.database_name
+    }
