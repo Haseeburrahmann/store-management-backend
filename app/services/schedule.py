@@ -765,3 +765,116 @@ class ScheduleService:
         except Exception as e:
             print(f"Error getting employee schedule: {str(e)}")
             return []
+
+    @staticmethod
+    async def get_all_employee_schedules(
+            employee_id: str,
+            start_date: Optional[date] = None,
+            end_date: Optional[date] = None,
+            skip: int = 0,
+            limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all schedules that contain shifts for a specific employee
+        across all time periods or within an optional date range
+
+        Args:
+            employee_id: The ID of the employee
+            start_date: Optional start date for filtering schedules
+            end_date: Optional end date for filtering schedules
+            skip: Number of records to skip (for pagination)
+            limit: Maximum number of records to return (for pagination)
+
+        Returns:
+            List of schedule objects containing the employee's shifts
+        """
+        try:
+            # First, ensure we have a valid ObjectId for the employee
+            try:
+                # Convert the employee_id string to ObjectId
+                employee_obj_id = ObjectId(employee_id)
+            except Exception as e:
+                print(f"Invalid employee ID format: {employee_id}, error: {str(e)}")
+                return []
+
+            # Create a query to find all schedules with shifts for this employee
+            # We need to handle both string IDs and ObjectId formats in the database
+            employee_id_str = str(employee_obj_id)  # String version
+
+            # Build the base query
+            query = {
+                "shifts": {
+                    "$elemMatch": {
+                        "$or": [
+                            {"employee_id": employee_id_str},  # Match string format
+                            {"employee_id": employee_obj_id}  # Match ObjectId format
+                        ]
+                    }
+                }
+            }
+
+            # Add date range filters if provided
+            if start_date:
+                start_datetime = datetime.combine(start_date, datetime.min.time())
+                if "week_start_date" not in query:
+                    query["week_start_date"] = {}
+                query["week_start_date"]["$gte"] = start_datetime
+
+            if end_date:
+                end_datetime = datetime.combine(end_date, datetime.max.time())
+                if "week_start_date" not in query:
+                    query["week_start_date"] = {}
+                query["week_start_date"]["$lte"] = end_datetime
+
+            # Debug log to check the query
+            print(f"Query for employee schedules: {query}")
+
+            # Execute the query to find matching schedules
+            schedules = await schedules_collection.find(query).sort("week_start_date", -1).skip(skip).limit(
+                limit).to_list(length=limit)
+
+            print(f"Found {len(schedules)} schedules for employee {employee_id}")
+
+            # Process each schedule to include only shifts for this employee
+            result = []
+            for schedule in schedules:
+                schedule_with_info = dict(schedule)
+
+                # Filter shifts to include only those for this employee
+                employee_shifts = []
+                for shift in schedule.get("shifts", []):
+                    shift_employee_id = shift.get("employee_id")
+
+                    # Convert ObjectId to string if necessary
+                    if isinstance(shift_employee_id, ObjectId):
+                        shift_employee_id = str(shift_employee_id)
+
+                    # Compare string representations to handle both ObjectId and string formats
+                    if shift_employee_id == employee_id_str:
+                        employee_shifts.append(shift)
+
+                # Replace the full shifts list with only this employee's shifts
+                schedule_with_info["shifts"] = employee_shifts
+                schedule_with_info["shift_count"] = len(employee_shifts)
+
+                # Get store info
+                if "store_id" in schedule:
+                    store, _ = await IdHandler.find_document_by_id(
+                        stores_collection,
+                        schedule["store_id"],
+                        not_found_msg=f"Store not found for ID: {schedule['store_id']}"
+                    )
+
+                    if store:
+                        schedule_with_info["store_name"] = store["name"]
+
+                # Format IDs consistently
+                schedule_with_info = IdHandler.format_object_ids(schedule_with_info)
+                result.append(schedule_with_info)
+
+            return result
+        except Exception as e:
+            print(f"Error getting all employee schedules: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []
