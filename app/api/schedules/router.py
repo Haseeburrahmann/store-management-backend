@@ -231,3 +231,59 @@ async def get_store_schedules(
         store_id=store_id,
         week_start_date=week_start_date
     )
+
+
+@router.get("/employee/{employee_id}/all", response_model=List[ScheduleSummary])
+async def get_all_employee_schedules(
+        employee_id: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        skip: int = 0,
+        limit: int = 100,
+        current_user: dict = Depends(has_permission("stores:read"))
+):
+    """
+    Get all schedules containing shifts for a specific employee
+
+    This endpoint returns all schedules that contain shifts for the specified employee,
+    optionally filtered by date range. For each schedule, only the shifts assigned to
+    this employee are included.
+
+    Args:
+        employee_id: ID of the employee
+        start_date: Optional start date for filtering schedules
+        end_date: Optional end date for filtering schedules
+        skip: Number of records to skip (for pagination)
+        limit: Maximum number of records to return (for pagination)
+
+    Returns:
+        List of schedule objects containing the employee's shifts
+    """
+    try:
+        print(f"Fetching all schedules for employee ID: {employee_id}")
+
+        # Get all schedules for this employee
+        schedules = await ScheduleService.get_all_employee_schedules(
+            employee_id=employee_id,
+            start_date=start_date,
+            end_date=end_date,
+            skip=skip,
+            limit=limit
+        )
+
+        print(f"Retrieved {len(schedules)} schedules for employee ID: {employee_id}")
+
+        return schedules
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        print(f"Error in get_all_employee_schedules endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        # Return proper error response
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching employee schedules: {str(e)}"
+        )
