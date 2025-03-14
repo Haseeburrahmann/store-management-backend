@@ -1,1 +1,1 @@
-uvicorn app.main:app --host 0.0.0.0 --port $PORTpip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
