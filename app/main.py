@@ -12,6 +12,7 @@ from app.api.timesheets.router import router as timesheets_router
 from app.core.config import settings
 from app.services.role import create_default_roles, get_role_by_name
 from app.services.user import get_user_by_email, create_user
+from app.api.payments.router import router as payments_router
 from bson import ObjectId
 
 app = FastAPI(
@@ -22,11 +23,7 @@ app = FastAPI(
 # Set up CORS - Updated to be more permissive
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:4200",
-        "https://*.vercel.app",  # This will allow all Vercel deployments
-        "https://web-production-7f210.up.railway.app"
-    ],
+    allow_origins=["http://localhost:4200"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,6 +37,7 @@ app.include_router(stores_router, prefix=f"{settings.API_V1_STR}/stores", tags=[
 app.include_router(employee_router, prefix=f"{settings.API_V1_STR}/employees", tags=["employees"])
 app.include_router(schedules_router, prefix=f"{settings.API_V1_STR}/schedules", tags=["schedules"])
 app.include_router(timesheets_router, prefix=f"{settings.API_V1_STR}/timesheets", tags=["timesheets"])
+app.include_router(payments_router, prefix=f"{settings.API_V1_STR}/payments", tags=["payments"])
 
 
 async def create_admin_user():
@@ -88,17 +86,3 @@ async def root():
     """
     return {"message": "Welcome to Store Management System API"}
 
-@app.get("/health")
-async def health_check():
-    return {"status": "ok", "version": "1.0.0"}
-
-@app.get("/debug-env")
-async def debug_env():
-    """Debug endpoint to check environment variables"""
-    import os
-    return {
-        "MONGODB_URL": os.environ.get("MONGODB_URL", "not set"),
-        "MONGODB_DB": os.environ.get("MONGODB_DB", "not set"),
-        "settings.database_url": settings.database_url,
-        "settings.database_name": settings.database_name
-    }
