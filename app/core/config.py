@@ -20,5 +20,12 @@ class Settings(BaseSettings):
         "extra": "ignore"
     }
 
+# Prioritize environment variables over .env file
+model_config = {
+    "env_file": ".env",
+    "extra": "ignore",
+    "env_file_encoding": "utf-8",
+    "env_ignore_empty": True,
+}
 
 settings = Settings()
