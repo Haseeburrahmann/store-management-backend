@@ -22,7 +22,7 @@ app = FastAPI(
 # Set up CORS - Updated to be more permissive
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4200"],  # Allow all origins for development
+    allow_origins=["http://localhost:4200","https://store-management-frontend-1xuz.vercel.app/"],  # Allow all origins for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
