@@ -22,7 +22,7 @@ app = FastAPI(
 # Set up CORS - Updated to be more permissive
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4200","https://store-management-frontend-1xuz.vercel.app/"],  # Allow all origins for development
+    allow_origins=["http://localhost:4200", "https://store-management-frontend-1xuz.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -83,3 +83,6 @@ async def root():
     Root endpoint
     """
     return {"message": "Welcome to Store Management System API"}
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "version": "1.0.0"}
