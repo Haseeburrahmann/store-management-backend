@@ -23,6 +23,7 @@ class TimesheetModel(BaseModel):
     store_id: str
     week_start_date: date  # Monday of the week
     week_end_date: date  # Sunday of the week
+    payment_id: Optional[str] = None
 
     # Store daily hours as a dictionary with day names as keys
     daily_hours: Dict[str, float] = Field(
@@ -145,6 +146,8 @@ class TimesheetWithDetails(BaseModel):
     rejection_reason: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    payment_id: Optional[str] = None
+    payment_status: Optional[str] = None
 
     model_config = {
         "populate_by_name": True,

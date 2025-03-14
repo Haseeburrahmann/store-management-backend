@@ -81,6 +81,11 @@ DEFAULT_ROLES = {
             get_permission_string(PermissionArea.STORES, PermissionAction.WRITE),
             get_permission_string(PermissionArea.SCHEDULES, PermissionAction.READ),
             get_permission_string(PermissionArea.SCHEDULES, PermissionAction.WRITE),
+
+            get_permission_string(PermissionArea.PAYMENTS, PermissionAction.READ),
+            get_permission_string(PermissionArea.PAYMENTS, PermissionAction.WRITE),
+            get_permission_string(PermissionArea.PAYMENTS, PermissionAction.APPROVE),
+
         ]
     },
     "employee": {
@@ -114,6 +119,8 @@ DEFAULT_ROLES = {
             get_permission_string(PermissionArea.SCHEDULES, PermissionAction.READ),
 
             get_permission_string(PermissionArea.EMPLOYEES, PermissionAction.READ),
+
+            get_permission_string(PermissionArea.PAYMENTS, PermissionAction.READ),
         ]
     }
 }
