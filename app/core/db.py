@@ -1,12 +1,17 @@
-# app/core/db.py - Update to include schedule and timesheet collections
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from app.core.config import settings
+import os
+
+# Get MongoDB connection details directly from environment
+MONGODB_URL = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
+MONGODB_DB = os.environ.get("MONGODB_DB", "store_management")
+
+print(f"DB CONNECTION: Using {MONGODB_URL} for database {MONGODB_DB}")
 
 # Create a MongoDB client
-client = AsyncIOMotorClient(settings.database_url)
+client = AsyncIOMotorClient(MONGODB_URL)
 
 # Get database instance
-database = client[settings.database_name]
+database = client[MONGODB_DB]
 
 def get_database() -> AsyncIOMotorDatabase:
     """
