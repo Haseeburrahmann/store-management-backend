@@ -39,7 +39,6 @@ class PaymentService:
             # Add store_id filter
             if store_id:
                 query["store_id"] = store_id
-                print(f"Filtering payments by store_id: {store_id}")
 
             if status:
                 # Handle multiple status values (comma-separated)

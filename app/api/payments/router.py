@@ -20,6 +20,7 @@ async def get_payments(
         skip: int = 0,
         limit: int = 100,
         employee_id: Optional[str] = None,
+        store_id: Optional[str] = None,  # Add this parameter
         status: Optional[str] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
@@ -28,10 +29,13 @@ async def get_payments(
     """
     Get all payments with optional filtering
     """
+    print(f"Request for payments with store_id: {store_id}, type: {type(store_id)}")
+
     return await PaymentService.get_payments(
         skip=skip,
         limit=limit,
         employee_id=employee_id,
+        store_id=store_id,  # Make sure to pass it here too
         status=status,
         start_date=start_date,
         end_date=end_date
