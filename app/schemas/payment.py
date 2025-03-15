@@ -1,4 +1,4 @@
-# app/schemas/payments.py
+# app/schemas/payment.py
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, validator
@@ -14,8 +14,9 @@ class PaymentStatus(str, Enum):
 
 
 class PaymentCreate(BaseModel):
-    """Schema for creating a payments manually"""
+    """Schema for creating a payment manually"""
     employee_id: str
+    store_id: Optional[str] = None  # Added store_id field
     timesheet_ids: List[str]
     period_start_date: date
     period_end_date: date
@@ -31,9 +32,15 @@ class PaymentCreate(BaseModel):
             return round(values['total_hours'] * values['hourly_rate'], 2)
         return v
 
+    model_config = {
+        "json_encoders": {
+            date: lambda v: v.isoformat()
+        }
+    }
+
 
 class PaymentUpdate(BaseModel):
-    """Schema for updating a payments"""
+    """Schema for updating a payment"""
     status: Optional[str] = None
     notes: Optional[str] = None
 
@@ -47,10 +54,12 @@ class PaymentUpdate(BaseModel):
 
 
 class PaymentResponse(BaseModel):
-    """Schema for payments responses"""
+    """Schema for payment responses"""
     id: str = Field(..., alias="_id")
     employee_id: str
     employee_name: Optional[str] = None
+    store_id: Optional[str] = None  # Added store_id field
+    store_name: Optional[str] = None  # Added store_name field
     timesheet_ids: List[str]
     period_start_date: date
     period_end_date: date
@@ -66,18 +75,23 @@ class PaymentResponse(BaseModel):
 
     model_config = {
         "populate_by_name": True,
-        "arbitrary_types_allowed": True
+        "arbitrary_types_allowed": True,
+        "json_encoders": {
+            date: lambda v: v.isoformat(),
+            datetime: lambda v: v.isoformat()
+        }
     }
 
 
 class PaymentWithDetails(PaymentResponse):
-    """Schema for payments with additional details"""
+    """Schema for payment with additional details"""
     employee_name: Optional[str] = None
+    store_name: Optional[str] = None
     timesheet_details: Optional[List[Dict[str, Any]]] = None
 
 
 class PaymentStatusUpdate(BaseModel):
-    """Schema for updating a payments status"""
+    """Schema for updating a payment status"""
     status: str
     notes: Optional[str] = None
 
@@ -90,12 +104,12 @@ class PaymentStatusUpdate(BaseModel):
 
 
 class PaymentConfirmation(BaseModel):
-    """Schema for confirming payments receipt"""
+    """Schema for confirming payment receipt"""
     notes: Optional[str] = None
 
 
 class PaymentDispute(BaseModel):
-    """Schema for disputing a payments"""
+    """Schema for disputing a payment"""
     reason: str
     details: Optional[str] = None
 
@@ -103,30 +117,38 @@ class PaymentDispute(BaseModel):
         json_schema_extra = {
             "example": {
                 "reason": "Incorrect amount",
-                "details": "The payments amount doesn't match my calculated hours"
+                "details": "The payment amount doesn't match my calculated hours"
             }
         }
 
 
 class PaymentGenerationRequest(BaseModel):
-    """Schema for requesting payments generation for a period"""
+    """Schema for requesting payment generation for a period"""
     start_date: date
     end_date: date
+    store_id: Optional[str] = None  # Added optional store_id for filtering
 
-    class Config:
-        json_schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "start_date": "2023-06-04",
-                "end_date": "2023-06-10"
+                "end_date": "2023-06-10",
+                "store_id": "60d21b4967d0d8992e610c86"  # Added example store_id
             }
+        },
+        "json_encoders": {
+            date: lambda v: v.isoformat()
         }
+    }
 
 
 class PaymentSummary(BaseModel):
-    """Schema for summarized payments information"""
+    """Schema for summarized payment information"""
     id: str = Field(..., alias="_id")
     employee_id: str
     employee_name: Optional[str] = None
+    store_id: Optional[str] = None  # Added store_id field
+    store_name: Optional[str] = None  # Added store_name field
     period_start_date: date
     period_end_date: date
     total_hours: float
@@ -136,5 +158,9 @@ class PaymentSummary(BaseModel):
 
     model_config = {
         "populate_by_name": True,
-        "arbitrary_types_allowed": True
+        "arbitrary_types_allowed": True,
+        "json_encoders": {
+            date: lambda v: v.isoformat(),
+            datetime: lambda v: v.isoformat()
+        }
     }

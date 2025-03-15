@@ -48,9 +48,9 @@ async def generate_payments(
     """
     return await PaymentService.generate_payments_for_period(
         start_date=request.start_date,
-        end_date=request.end_date
+        end_date=request.end_date,
+        store_id=request.store_id  # Pass optional store_id for filtering
     )
-
 
 @router.get("/me", response_model=List[PaymentSummary])
 async def get_my_payments(
