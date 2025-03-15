@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 
 from app.core.db import get_database, get_payments_collection, get_timesheets_collection, get_employees_collection
 from app.models.payment import PaymentModel, PaymentStatus
+from app.services.schedule import stores_collection
 from app.utils.id_handler import IdHandler
 from app.utils.datetime_handler import DateTimeHandler
 
@@ -17,11 +18,13 @@ employees_collection = get_employees_collection()
 
 
 class PaymentService:
+    # Update the get_payments method to include store information
     @staticmethod
     async def get_payments(
             skip: int = 0,
             limit: int = 100,
             employee_id: Optional[str] = None,
+            store_id: Optional[str] = None,  # Added store_id filter
             status: Optional[str] = None,
             start_date: Optional[date] = None,
             end_date: Optional[date] = None
@@ -32,6 +35,11 @@ class PaymentService:
 
             if employee_id:
                 query["employee_id"] = employee_id
+
+            # Add store_id filter
+            if store_id:
+                query["store_id"] = store_id
+                print(f"Filtering payments by store_id: {store_id}")
 
             if status:
                 # Handle multiple status values (comma-separated)
@@ -49,7 +57,7 @@ class PaymentService:
 
             payments = await payments_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
 
-            # Enrich with employee names
+            # Enrich with employee and store names
             result = []
             for payment in payments:
                 payment_with_info = dict(payment)
@@ -67,6 +75,17 @@ class PaymentService:
                         user = await get_user_by_id(employee["user_id"])
                         if user:
                             payment_with_info["employee_name"] = user["full_name"]
+
+                # Get store info if available
+                if "store_id" in payment:
+                    store, _ = await IdHandler.find_document_by_id(
+                        stores_collection,
+                        payment["store_id"],
+                        not_found_msg=f"Store not found for ID: {payment['store_id']}"
+                    )
+
+                    if store:
+                        payment_with_info["store_name"] = store["name"]
 
                 # Format all IDs consistently
                 payment_with_info = IdHandler.format_object_ids(payment_with_info)
@@ -347,11 +366,12 @@ class PaymentService:
     @staticmethod
     async def generate_payments_for_period(
             start_date: date,
-            end_date: date
+            end_date: date,
+            store_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Generate payments from approved timesheets for a specific period"""
         try:
-            # Convert dates to datetime for MongoDB query
+            # Convert dates to datetime for MongoDB query if needed
             if isinstance(start_date, str):
                 start_date = DateTimeHandler.parse_date(start_date)
             if isinstance(end_date, str):
@@ -360,8 +380,8 @@ class PaymentService:
             start_datetime = datetime.combine(start_date, datetime.min.time())
             end_datetime = datetime.combine(end_date, datetime.max.time())
 
-            # Find approved timesheets in the period that aren't already linked to a payment
-            timesheets = await timesheets_collection.find({
+            # Create query for approved timesheets in the period not linked to payments
+            query = {
                 "status": "approved",
                 "week_start_date": {"$gte": start_datetime},
                 "week_end_date": {"$lte": end_datetime},
@@ -369,7 +389,13 @@ class PaymentService:
                     {"payment_id": {"$exists": False}},
                     {"payment_id": None}
                 ]
-            }).to_list(length=1000)
+            }
+
+            # Add store filter if provided
+            if store_id:
+                query["store_id"] = IdHandler.ensure_object_id(store_id)
+
+            timesheets = await timesheets_collection.find(query).to_list(length=1000)
 
             print(f"Found {len(timesheets)} approved timesheets for payment generation")
 
@@ -404,12 +430,17 @@ class PaymentService:
                 hourly_rate = emp_timesheets[0]["hourly_rate"]
                 gross_amount = round(total_hours * hourly_rate, 2)
 
+                # Get store_id from the timesheet (all timesheets for an employee should have the same store)
+                store_id = None
+                if emp_timesheets and "store_id" in emp_timesheets[0]:
+                    store_id = IdHandler.id_to_str(emp_timesheets[0]["store_id"])
+
                 # Create payment record
                 payment_data = {
                     "employee_id": employee_id,
                     "timesheet_ids": [IdHandler.id_to_str(ts["_id"]) for ts in emp_timesheets],
-                    "period_start_date": start_date,
-                    "period_end_date": end_date,
+                    "period_start_date": datetime.combine(start_date, datetime.min.time()),
+                    "period_end_date": datetime.combine(end_date, datetime.min.time()),
                     "total_hours": total_hours,
                     "hourly_rate": hourly_rate,
                     "gross_amount": gross_amount,
@@ -417,6 +448,10 @@ class PaymentService:
                     "created_at": datetime.utcnow(),
                     "updated_at": datetime.utcnow()
                 }
+
+                # Add store_id if available
+                if store_id:
+                    payment_data["store_id"] = store_id
 
                 # Insert payment
                 result = await payments_collection.insert_one(payment_data)
