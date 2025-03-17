@@ -1,132 +1,176 @@
-# app/api/employees/router.py
-from typing import List, Optional, Dict, Any
+"""
+Employee API routes for employee management.
+"""
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import ValidationError
 
-from app.dependencies.permissions import get_current_user, has_permission
-from app.schemas.employee import EmployeeUpdate, EmployeeResponse, EmployeeWithUserInfo, EmployeeWithStoreInfo, \
-    EmployeeUserCreateModel, EmployeeCreate
-from app.services.employee import EmployeeService
-from app.services.store import StoreService
-from app.services.user import get_user_by_id
-from app.utils.id_handler import IdHandler
+from app.domains.employees.service import employee_service
+from app.domains.stores.service import store_service
+from app.core.permissions import has_permission, get_current_user
+from app.schemas.employee import (
+    EmployeeCreate, EmployeeUpdate, EmployeeResponse, EmployeeWithUserInfo,
+    EmployeeWithStoreInfo, EmployeeUserCreateModel
+)
 
 router = APIRouter()
 
 
 @router.get("/", response_model=List[EmployeeWithStoreInfo])
 async def get_employees(
-        skip: int = 0,
-        limit: int = 100,
-        position: Optional[str] = None,
-        store_id: Optional[str] = None,
-        status: Optional[str] = None,
-        current_user: Dict[str, Any] = Depends(has_permission("employees:read"))
+    skip: int = 0,
+    limit: int = 100,
+    position: Optional[str] = None,
+    store_id: Optional[str] = None,
+    status: Optional[str] = None,
+    current_user: dict = Depends(has_permission("employees:read"))
 ):
     """
-    Get all employees with optional filtering
+    Get all employees with optional filtering.
+
+    Args:
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        position: Filter by position pattern
+        store_id: Filter by store ID
+        status: Filter by employment status
+        current_user: Current user from token
+
+    Returns:
+        List of employees
     """
-    print(f"Getting employees with filters: position={position}, store_id={store_id}, status={status}")
-    return await EmployeeService.get_employees(skip, limit, position, store_id, status)
+    try:
+        employees = await employee_service.get_employees(
+            skip=skip,
+            limit=limit,
+            position=position,
+            store_id=store_id,
+            status=status
+        )
+        return employees
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching employees: {str(e)}"
+        )
 
 
 @router.get("/by-store/{store_id}", response_model=List[EmployeeWithUserInfo])
 async def get_employees_by_store(
-        store_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("employees:read"))
+    store_id: str,
+    current_user: dict = Depends(has_permission("employees:read"))
 ):
     """
-    Get employees by store ID
-    """
-    # First verify store exists
-    store = await StoreService.get_store(store_id)
-    if not store:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Store with ID {store_id} not found"
-        )
+    Get employees by store ID.
 
-    return await EmployeeService.get_employees(store_id=store_id)
+    Args:
+        store_id: Store ID
+        current_user: Current user from token
+
+    Returns:
+        List of employees
+    """
+    try:
+        # First verify store exists
+        store = await store_service.get_store(store_id)
+        if not store:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Store with ID {store_id} not found"
+            )
+
+        return await employee_service.get_employees_by_store(store_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching employees: {str(e)}"
+        )
 
 
 @router.get("/me", response_model=EmployeeWithStoreInfo)
 async def get_my_employee_profile(
-        current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """
-    Get current user's employee profile
+    Get current user's employee profile.
+
+    Args:
+        current_user: Current user from token
+
+    Returns:
+        Employee profile
     """
-    print(f"Getting employee profile for user: {current_user.get('email')}")
-    employee = await EmployeeService.get_employee_by_user_id(str(current_user["_id"]))
-    if not employee:
+    try:
+        employee = await employee_service.get_employee_by_user_id(str(current_user["_id"]))
+        if not employee:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Employee profile not found"
+            )
+        return employee
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Employee profile not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching employee profile: {str(e)}"
         )
-    return employee
 
 
 @router.get("/{employee_id}", response_model=EmployeeWithStoreInfo)
 async def get_employee(
-        employee_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("employees:read"))
+    employee_id: str,
+    current_user: dict = Depends(has_permission("employees:read"))
 ):
     """
-    Get employee by ID
+    Get employee by ID.
+
+    Args:
+        employee_id: Employee ID
+        current_user: Current user from token
+
+    Returns:
+        Employee
     """
-    print(f"Getting employee with ID: {employee_id}")
-    employee = await EmployeeService.get_employee(employee_id)
-
-    # Use the helper method to raise a consistent 404 error if not found
-    IdHandler.raise_if_not_found(
-        employee,
-        f"Employee with ID {employee_id} not found",
-        status.HTTP_404_NOT_FOUND
-    )
-
-    return employee
+    try:
+        employee = await employee_service.get_employee(employee_id)
+        if not employee:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Employee with ID {employee_id} not found"
+            )
+        return employee
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching employee: {str(e)}"
+        )
 
 
 @router.post("/", response_model=EmployeeResponse, status_code=status.HTTP_201_CREATED)
 async def create_employee(
-        employee: EmployeeCreate,
-        current_user: Dict[str, Any] = Depends(has_permission("employees:write"))
+    employee_data: EmployeeCreate,
+    current_user: dict = Depends(has_permission("employees:write"))
 ):
     """
-    Create new employee
+    Create new employee.
+
+    Args:
+        employee_data: Employee creation data
+        current_user: Current user from token
+
+    Returns:
+        Created employee
     """
     try:
-        print(f"Creating employee: {employee.position}")
-
-        # Validate user_id if provided
-        if employee.user_id:
-            user = await get_user_by_id(employee.user_id)
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"User with ID {employee.user_id} not found"
-                )
-
-        # Validate store_id if provided
-        if employee.store_id:
-            store = await StoreService.get_store(employee.store_id)
-            if not store:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Store with ID {employee.store_id} not found"
-                )
-
-        return await EmployeeService.create_employee(employee.model_dump())
-    except ValidationError as e:
-        print(f"Validation error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Validation error: {str(e)}"
-        )
+        employee = await employee_service.create_employee(employee_data.model_dump())
+        return employee
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error creating employee: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error creating employee: {str(e)}"
@@ -135,59 +179,37 @@ async def create_employee(
 
 @router.put("/{employee_id}", response_model=EmployeeResponse)
 async def update_employee(
-        employee_id: str,
-        employee: EmployeeUpdate,
-        current_user: Dict[str, Any] = Depends(has_permission("employees:write"))
+    employee_id: str,
+    employee_data: EmployeeUpdate,
+    current_user: dict = Depends(has_permission("employees:write"))
 ):
     """
-    Update existing employee
+    Update existing employee.
+
+    Args:
+        employee_id: Employee ID
+        employee_data: Employee update data
+        current_user: Current user from token
+
+    Returns:
+        Updated employee
     """
     try:
-        print(f"Updating employee with ID: {employee_id}")
+        updated_employee = await employee_service.update_employee(
+            employee_id=employee_id,
+            employee_data=employee_data.model_dump(exclude_unset=True)
+        )
 
-        # Verify employee exists
-        existing_employee = await EmployeeService.get_employee(employee_id)
-        if not existing_employee:
+        if not updated_employee:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Employee with ID {employee_id} not found"
-            )
-
-        # Get update data
-        update_data = employee.model_dump(exclude_unset=True)
-        print(f"Update data: {update_data}")
-
-        # Validate user_id if changing
-        if update_data.get("user_id"):
-            user = await get_user_by_id(update_data["user_id"])
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"User with ID {update_data['user_id']} not found"
-                )
-
-        # Validate store_id if changing
-        if update_data.get("store_id"):
-            store = await StoreService.get_store(update_data["store_id"])
-            if not store:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Store with ID {update_data['store_id']} not found"
-                )
-
-        # Update employee
-        updated_employee = await EmployeeService.update_employee(employee_id, update_data)
-        if not updated_employee:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update employee"
             )
 
         return updated_employee
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error updating employee: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error updating employee: {str(e)}"
@@ -196,29 +218,34 @@ async def update_employee(
 
 @router.delete("/{employee_id}", response_model=bool)
 async def delete_employee(
-        employee_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("employees:delete"))
+    employee_id: str,
+    current_user: dict = Depends(has_permission("employees:delete"))
 ):
     """
-    Delete employee
+    Delete employee.
+
+    Args:
+        employee_id: Employee ID
+        current_user: Current user from token
+
+    Returns:
+        True if employee was deleted
     """
     try:
-        print(f"Deleting employee with ID: {employee_id}")
-
-        # Verify employee exists
-        existing_employee = await EmployeeService.get_employee(employee_id)
+        # Check if employee exists
+        existing_employee = await employee_service.get_employee(employee_id)
         if not existing_employee:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Employee with ID {employee_id} not found"
             )
 
-        result = await EmployeeService.delete_employee(employee_id)
+        # Delete employee
+        result = await employee_service.delete_employee(employee_id)
         return result
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error deleting employee: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting employee: {str(e)}"
@@ -227,32 +254,40 @@ async def delete_employee(
 
 @router.put("/{employee_id}/assign-store/{store_id}", response_model=EmployeeResponse)
 async def assign_to_store(
-        employee_id: str,
-        store_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("employees:write"))
+    employee_id: str,
+    store_id: str,
+    current_user: dict = Depends(has_permission("employees:write"))
 ):
     """
-    Assign employee to store
+    Assign employee to store.
+
+    Args:
+        employee_id: Employee ID
+        store_id: Store ID
+        current_user: Current user from token
+
+    Returns:
+        Updated employee
     """
     try:
-        print(f"Assigning employee {employee_id} to store {store_id}")
-
-        # Validate both exist before attempting assignment
-        employee = await EmployeeService.get_employee(employee_id)
+        # Check if employee exists
+        employee = await employee_service.get_employee(employee_id)
         if not employee:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Employee with ID {employee_id} not found"
             )
 
-        store = await StoreService.get_store(store_id)
+        # Check if store exists
+        store = await store_service.get_store(store_id)
         if not store:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Store with ID {store_id} not found"
             )
 
-        updated_employee = await EmployeeService.assign_to_store(employee_id, store_id)
+        # Assign employee to store
+        updated_employee = await employee_service.assign_to_store(employee_id, store_id)
         if not updated_employee:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -263,7 +298,6 @@ async def assign_to_store(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error assigning employee to store: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error assigning employee to store: {str(e)}"
@@ -272,157 +306,30 @@ async def assign_to_store(
 
 @router.post("/with-user", response_model=EmployeeResponse, status_code=status.HTTP_201_CREATED)
 async def create_employee_with_user(
-        employee_data: EmployeeUserCreateModel,
-        current_user: Dict[str, Any] = Depends(has_permission("employees:write"))
+    data: EmployeeUserCreateModel,
+    current_user: dict = Depends(has_permission("employees:write"))
 ):
     """
-    Create a new employee with a user account
+    Create a new employee with a user account.
+
+    Args:
+        data: Combined user and employee data
+        current_user: Current user from token
+
+    Returns:
+        Created employee
     """
     try:
-        print(f"Creating employee with user account: {employee_data.email}")
+        # Convert to dict
+        employee_user_data = data.model_dump()
 
-        # First check if a user with this email already exists
-        from app.services.user import get_user_by_email
-        existing_user = await get_user_by_email(employee_data.email)
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"User with email {employee_data.email} already exists"
-            )
-
-        # Validate the role if provided
-        if employee_data.role_id:
-            from app.services.role import get_role_by_id
-            role = await get_role_by_id(employee_data.role_id)
-            if not role:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Role with ID {employee_data.role_id} not found"
-                )
-
-        # Validate store if provided
-        if employee_data.store_id:
-            store = await StoreService.get_store(employee_data.store_id)
-            if not store:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Store with ID {employee_data.store_id} not found"
-                )
-
-        # Extract user data
-        user_data = {
-            "email": employee_data.email,
-            "full_name": employee_data.full_name,
-            "password": employee_data.password,
-            "phone_number": employee_data.phone_number,
-            "role_id": employee_data.role_id,
-            "is_active": True
-        }
-
-        # Create user
-        from app.services.user import create_user
-        created_user = await create_user(user_data)
-        if not created_user:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create user"
-            )
-
-        # Create employee data
-        employee_model_data = employee_data.model_dump(exclude={
-            "email", "full_name", "password", "phone_number", "role_id"
-        })
-        employee_model_data["user_id"] = str(created_user["_id"])
-
-        # Create employee
-        created_employee = await EmployeeService.create_employee(employee_model_data)
-        if not created_employee:
-            # Try to rollback user creation if employee creation fails
-            from app.services.user import delete_user
-            await delete_user(str(created_user["_id"]))
-
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create employee record"
-            )
-
+        # Create employee with user
+        created_employee = await employee_service.create_employee_with_user(employee_user_data)
         return created_employee
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error creating employee with user: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error creating employee with user: {str(e)}"
-        )
-
-
-@router.get("/debug/lookup/{employee_id}")
-async def debug_lookup_employee(
-        employee_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("employees:read"))
-):
-    """
-    Debug endpoint to test different employee lookup methods
-    """
-    from app.utils.formatting import ensure_object_id
-    from app.core.db import get_employees_collection
-    employees_collection = get_employees_collection()
-
-    try:
-        result = {
-            "requested_id": employee_id,
-            "lookup_results": {}
-        }
-
-        # Method 1: Direct ObjectId lookup
-        obj_id = ensure_object_id(employee_id)
-        if obj_id:
-            employee = await employees_collection.find_one({"_id": obj_id})
-            result["lookup_results"]["objectid_lookup"] = {
-                "success": employee is not None,
-                "employee_position": employee.get("position") if employee else None
-            }
-        else:
-            result["lookup_results"]["objectid_lookup"] = {
-                "success": False,
-                "error": "Invalid ObjectId format"
-            }
-
-        # Method 2: String ID lookup
-        employee = await employees_collection.find_one({"_id": employee_id})
-        result["lookup_results"]["string_id_lookup"] = {
-            "success": employee is not None,
-            "employee_position": employee.get("position") if employee else None
-        }
-
-        # Method 3: String comparison
-        all_employees = await employees_collection.find().to_list(length=100)
-        employee_match = None
-        for emp in all_employees:
-            if str(emp.get("_id")) == employee_id:
-                employee_match = emp
-                break
-
-        result["lookup_results"]["string_comparison"] = {
-            "success": employee_match is not None,
-            "employee_position": employee_match.get("position") if employee_match else None,
-            "total_employees_checked": len(all_employees)
-        }
-
-        # Method 4: Service method lookup
-        employee = await EmployeeService.get_employee(employee_id)
-        result["lookup_results"]["service_method"] = {
-            "success": employee is not None,
-            "employee_position": employee.get("position") if employee else None
-        }
-
-        # List all employee IDs for reference
-        result["all_employee_ids"] = [str(emp.get("_id")) for emp in all_employees]
-
-        return result
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error in debug lookup: {str(e)}"
         )

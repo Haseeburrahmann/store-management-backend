@@ -1,11 +1,13 @@
-# app/schemas/schedule.py
+"""
+Schedule schema models for validation.
+"""
 from typing import Optional, List, Dict
 from datetime import date, datetime
 from pydantic import BaseModel, Field, validator
 
 
-class ShiftCreate(BaseModel):
-    """Schema for creating a shift"""
+class ShiftBase(BaseModel):
+    """Base shift schema with common fields."""
     employee_id: str
     day_of_week: str  # "monday", "tuesday", etc.
     start_time: str   # "09:00" format
@@ -34,8 +36,13 @@ class ShiftCreate(BaseModel):
         return end_time
 
 
+class ShiftCreate(ShiftBase):
+    """Schema for creating a shift."""
+    pass
+
+
 class ShiftUpdate(BaseModel):
-    """Schema for updating a shift"""
+    """Schema for updating a shift."""
     employee_id: Optional[str] = None
     day_of_week: Optional[str] = None
     start_time: Optional[str] = None
@@ -61,16 +68,15 @@ class ShiftUpdate(BaseModel):
             raise ValueError(f"Time must be in HH:MM format (24-hour): {time_str}")
         return time_str
 
+    model_config = {
+        "extra": "ignore"
+    }
 
-class ShiftResponse(BaseModel):
-    """Schema for shift responses"""
+
+class ShiftResponse(ShiftBase):
+    """Schema for shift responses."""
     id: str = Field(..., alias="_id")
-    employee_id: str
-    day_of_week: str
-    start_time: str
-    end_time: str
-    notes: Optional[str] = None
-    employee_name: Optional[str] = None  # Added for convenience
+    employee_name: Optional[str] = None
 
     model_config = {
         "populate_by_name": True,
@@ -78,26 +84,31 @@ class ShiftResponse(BaseModel):
     }
 
 
-class ScheduleCreate(BaseModel):
-    """Schema for creating a schedule"""
+class ScheduleBase(BaseModel):
+    """Base schedule schema with common fields."""
     store_id: str
     title: str
     week_start_date: date
+
+
+class ScheduleCreate(ScheduleBase):
+    """Schema for creating a schedule."""
     shifts: Optional[List[ShiftCreate]] = None
 
 
 class ScheduleUpdate(BaseModel):
-    """Schema for updating a schedule"""
+    """Schema for updating a schedule."""
     title: Optional[str] = None
     shifts: Optional[List[ShiftCreate]] = None
 
+    model_config = {
+        "extra": "ignore"
+    }
 
-class ScheduleResponse(BaseModel):
-    """Schema for schedule responses"""
+
+class ScheduleResponse(ScheduleBase):
+    """Schema for schedule responses."""
     id: str = Field(..., alias="_id")
-    store_id: str
-    title: str
-    week_start_date: date
     week_end_date: date
     shifts: List[ShiftResponse]
     created_by: str
@@ -106,18 +117,22 @@ class ScheduleResponse(BaseModel):
 
     model_config = {
         "populate_by_name": True,
-        "arbitrary_types_allowed": True
+        "arbitrary_types_allowed": True,
+        "json_encoders": {
+            datetime: lambda v: v.isoformat(),
+            date: lambda v: v.isoformat()
+        }
     }
 
 
 class ScheduleWithDetails(ScheduleResponse):
-    """Schema for schedule with additional details"""
+    """Schema for schedule with additional details."""
     store_name: Optional[str] = None
     created_by_name: Optional[str] = None
 
 
 class ScheduleSummary(BaseModel):
-    """Schema for schedule summary (used in listings)"""
+    """Schema for schedule summary (used in listings)."""
     id: str = Field(..., alias="_id")
     store_id: str
     store_name: Optional[str] = None
@@ -129,5 +144,9 @@ class ScheduleSummary(BaseModel):
 
     model_config = {
         "populate_by_name": True,
-        "arbitrary_types_allowed": True
+        "arbitrary_types_allowed": True,
+        "json_encoders": {
+            datetime: lambda v: v.isoformat(),
+            date: lambda v: v.isoformat()
+        }
     }

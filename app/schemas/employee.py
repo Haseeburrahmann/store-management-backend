@@ -1,15 +1,14 @@
-# app/schemas/employee.py
+"""
+Employee schema models for validation.
+"""
 from typing import Optional
 from pydantic import BaseModel, Field, EmailStr, validator
 from datetime import datetime
 
 
-class EmployeeCreate(BaseModel):
-    """Schema for creating employees"""
-    user_id: Optional[str] = None
+class EmployeeBase(BaseModel):
+    """Base employee schema with common fields."""
     position: str
-    hire_date: Optional[datetime] = None
-    store_id: Optional[str] = None
     hourly_rate: float
     employment_status: str = "active"  # active, on_leave, terminated
     emergency_contact_name: Optional[str] = None
@@ -18,6 +17,13 @@ class EmployeeCreate(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     zip_code: Optional[str] = None
+
+
+class EmployeeCreate(EmployeeBase):
+    """Schema for creating employees."""
+    user_id: Optional[str] = None
+    store_id: Optional[str] = None
+    hire_date: Optional[datetime] = None
 
     @validator('hourly_rate')
     def validate_hourly_rate(cls, v):
@@ -32,28 +38,10 @@ class EmployeeCreate(BaseModel):
             raise ValueError(f'Status must be one of: {", ".join(valid_statuses)}')
         return v
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "user_id": "60d21b4967d0d8992e610c85",
-                "position": "Cashier",
-                "store_id": "60d21b4967d0d8992e610c86",
-                "hourly_rate": 15.50,
-                "employment_status": "active",
-                "emergency_contact_name": "Jane Doe",
-                "emergency_contact_phone": "555-987-6543",
-                "address": "123 Main St",
-                "city": "New York",
-                "state": "NY",
-                "zip_code": "10001"
-            }
-        }
-
 
 class EmployeeUpdate(BaseModel):
-    """Schema for updating employees"""
+    """Schema for updating employees."""
     position: Optional[str] = None
-    store_id: Optional[str] = None
     hourly_rate: Optional[float] = None
     employment_status: Optional[str] = None
     emergency_contact_name: Optional[str] = None
@@ -62,6 +50,7 @@ class EmployeeUpdate(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     zip_code: Optional[str] = None
+    store_id: Optional[str] = None
     user_id: Optional[str] = None
 
     @validator('hourly_rate')
@@ -74,49 +63,48 @@ class EmployeeUpdate(BaseModel):
     def validate_status(cls, v):
         if v is None:
             return v
-
         valid_statuses = ['active', 'on_leave', 'terminated']
         if v not in valid_statuses:
             raise ValueError(f'Status must be one of: {", ".join(valid_statuses)}')
         return v
 
-    class Config:
-        # Allow partial updates
-        extra = "ignore"
-        json_schema_extra = {
-            "example": {
-                "position": "Senior Cashier",
-                "hourly_rate": 17.50
-            }
-        }
+    model_config = {
+        "extra": "ignore"
+    }
 
 
-class EmployeeResponse(BaseModel):
-    """Schema for employee responses"""
+class EmployeeResponse(EmployeeBase):
+    """Schema for employee responses."""
     id: str = Field(..., alias="_id")
     user_id: Optional[str] = None
-    position: str
-    hire_date: datetime
     store_id: Optional[str] = None
-    hourly_rate: float
-    employment_status: str
-    emergency_contact_name: Optional[str] = None
-    emergency_contact_phone: Optional[str] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    zip_code: Optional[str] = None
+    hire_date: datetime
     created_at: datetime
     updated_at: datetime
 
     model_config = {
         "populate_by_name": True,
-        "arbitrary_types_allowed": True
+        "arbitrary_types_allowed": True,
+        "json_encoders": {
+            datetime: lambda v: v.isoformat()
+        }
     }
 
 
+class EmployeeWithUserInfo(EmployeeResponse):
+    """Schema for employee with user information."""
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    phone_number: Optional[str] = None
+
+
+class EmployeeWithStoreInfo(EmployeeWithUserInfo):
+    """Schema for employee with store information."""
+    store_name: Optional[str] = None
+
+
 class EmployeeUserCreateModel(BaseModel):
-    """Schema for creating employees with user accounts"""
+    """Schema for creating employees with user accounts."""
     # User fields
     email: EmailStr
     full_name: str
@@ -126,10 +114,9 @@ class EmployeeUserCreateModel(BaseModel):
 
     # Employee fields
     position: str
-    hire_date: Optional[datetime] = None
-    store_id: Optional[str] = None
     hourly_rate: float
     employment_status: str = "active"
+    store_id: Optional[str] = None
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
     address: Optional[str] = None
@@ -156,8 +143,8 @@ class EmployeeUserCreateModel(BaseModel):
             raise ValueError('Password must be at least 8 characters')
         return v
 
-    class Config:
-        json_schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "email": "employee@example.com",
                 "full_name": "John Smith",
@@ -169,15 +156,4 @@ class EmployeeUserCreateModel(BaseModel):
                 "store_id": "60d21b4967d0d8992e610c88"
             }
         }
-
-
-class EmployeeWithUserInfo(EmployeeResponse):
-    """Schema for employee with user information"""
-    email: Optional[str] = None
-    full_name: Optional[str] = None
-    phone_number: Optional[str] = None
-
-
-class EmployeeWithStoreInfo(EmployeeWithUserInfo):
-    """Schema for employee with store information"""
-    store_name: Optional[str] = None
+    }
