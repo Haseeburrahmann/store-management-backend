@@ -1,16 +1,18 @@
 # app/api/timesheets/router.py
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from starlette.responses import JSONResponse
 
 from app.dependencies.permissions import get_current_user, has_permission
+from app.models.timesheet import TimesheetStatus
 from app.schemas.timesheet import (
     TimesheetCreate, TimesheetUpdate, TimesheetResponse, TimesheetWithDetails,
     TimesheetSubmit, TimesheetApproval, DailyHoursUpdate, TimesheetSummary
 )
 from app.services.timesheet import TimesheetService, timesheets_collection
+from app.utils.id_handler import IdHandler
 
 router = APIRouter()
 
@@ -156,6 +158,119 @@ async def get_timesheet(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving timesheet: {str(e)}"
+        )
+
+
+@router.post("/me/start-past", response_model=TimesheetResponse)
+async def start_past_timesheet(
+        store_id: str = Query(..., description="Store ID where the work was performed"),
+        week_start_date: str = Query(..., description="Start date of the week (YYYY-MM-DD)"),
+        current_user: dict = Depends(get_current_user)
+):
+    """
+    Start a new timesheet for a past week
+    """
+    try:
+        # Validate date format
+        try:
+            start_date = datetime.fromisoformat(week_start_date).date()
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date format for week_start_date. Expected YYYY-MM-DD"
+            )
+
+        # Validate the date is a Monday (start of week)
+        if start_date.weekday() != 0:  # 0 is Monday
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Week start date must be a Monday"
+            )
+
+        # Get employee ID for current user
+        from app.services.employee import EmployeeService
+        employee = await EmployeeService.get_employee_by_user_id(str(current_user["_id"]))
+
+        if not employee:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Employee profile not found"
+            )
+
+        # Format the week_start_date as datetime for MongoDB
+        week_start_datetime = datetime.combine(start_date, datetime.min.time())
+
+        # Check if a timesheet already exists for this week
+        existing_timesheet = await timesheets_collection.find_one({
+            "employee_id": str(employee["_id"]),
+            "week_start_date": week_start_datetime
+        })
+
+        if existing_timesheet:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A timesheet already exists for this week"
+            )
+
+        # Check if the store exists
+        from app.services.store import StoreService
+        store = await StoreService.get_store(store_id)
+        if not store:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Store with ID {store_id} not found"
+            )
+
+        # Calculate week_end_date (Sunday of the week)
+        week_end_date = start_date + timedelta(days=6)
+        week_end_datetime = datetime.combine(week_end_date, datetime.min.time())
+
+        # Get the employee's hourly rate
+        hourly_rate = employee.get("hourly_rate", 0)
+
+        # Create timesheet data
+        timesheet_data = {
+            "employee_id": str(employee["_id"]),
+            "store_id": store_id,
+            "week_start_date": week_start_datetime,
+            "week_end_date": week_end_datetime,
+            "hourly_rate": hourly_rate,
+            "daily_hours": {
+                "monday": 0,
+                "tuesday": 0,
+                "wednesday": 0,
+                "thursday": 0,
+                "friday": 0,
+                "saturday": 0,
+                "sunday": 0
+            },
+            "total_hours": 0,
+            "total_earnings": 0,
+            "status": TimesheetStatus.DRAFT.value,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+
+        # Insert the timesheet
+        result = await timesheets_collection.insert_one(timesheet_data)
+
+        # Get the newly created timesheet
+        new_timesheet = await timesheets_collection.find_one({"_id": result.inserted_id})
+
+        # Format the result
+        return IdHandler.format_object_ids(new_timesheet)
+
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        print(f"Error in start_past_timesheet endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating past timesheet: {str(e)}"
         )
 
 

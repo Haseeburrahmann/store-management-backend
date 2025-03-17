@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.services.role import create_default_roles, get_role_by_name
 from app.services.user import get_user_by_email, create_user
 from app.api.payments.router import router as payments_router
+from app.api.inventory_requests.router import router as inventory_requests_router
 from bson import ObjectId
 
 app = FastAPI(
@@ -38,6 +39,7 @@ app.include_router(employee_router, prefix=f"{settings.API_V1_STR}/employees", t
 app.include_router(schedules_router, prefix=f"{settings.API_V1_STR}/schedules", tags=["schedules"])
 app.include_router(timesheets_router, prefix=f"{settings.API_V1_STR}/timesheets", tags=["timesheets"])
 app.include_router(payments_router, prefix=f"{settings.API_V1_STR}/payments", tags=["payments"])
+app.include_router(inventory_requests_router, prefix=f"{settings.API_V1_STR}/inventory-requests", tags=["inventory-requests"])
 
 
 async def create_admin_user():
