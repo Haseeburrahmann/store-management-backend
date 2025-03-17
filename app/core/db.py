@@ -5,7 +5,7 @@ import os
 MONGODB_URL = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
 MONGODB_DB = os.environ.get("MONGODB_DB", "store_management")
 
-print(f"DB CONNECTION: Using {MONGODB_URL} for database {MONGODB_DB}")
+# print(f"DB CONNECTION: Using {MONGODB_URL} for database {MONGODB_DB}")
 
 # Create a MongoDB client
 client = AsyncIOMotorClient(MONGODB_URL)
@@ -41,3 +41,6 @@ def get_timesheets_collection():
 
 def get_payments_collection():
     return database.payments
+
+def get_inventory_requests_collection():
+    return database.inventory_requests

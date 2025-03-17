@@ -82,9 +82,15 @@ DEFAULT_ROLES = {
             get_permission_string(PermissionArea.SCHEDULES, PermissionAction.READ),
             get_permission_string(PermissionArea.SCHEDULES, PermissionAction.WRITE),
 
+            #Payments
             get_permission_string(PermissionArea.PAYMENTS, PermissionAction.READ),
             get_permission_string(PermissionArea.PAYMENTS, PermissionAction.WRITE),
             get_permission_string(PermissionArea.PAYMENTS, PermissionAction.APPROVE),
+
+            #Inventory
+            get_permission_string(PermissionArea.INVENTORY, PermissionAction.READ),
+            get_permission_string(PermissionArea.INVENTORY, PermissionAction.WRITE),
+            get_permission_string(PermissionArea.INVENTORY, PermissionAction.APPROVE),
 
         ]
     },
@@ -120,7 +126,12 @@ DEFAULT_ROLES = {
 
             get_permission_string(PermissionArea.EMPLOYEES, PermissionAction.READ),
 
+            #payments
             get_permission_string(PermissionArea.PAYMENTS, PermissionAction.READ),
+
+            #Inventory
+            get_permission_string(PermissionArea.INVENTORY, PermissionAction.READ),
+            get_permission_string(PermissionArea.INVENTORY, PermissionAction.WRITE),
         ]
     }
 }
