@@ -1,10 +1,12 @@
-# app/api/users/router.py
-from typing import List, Optional, Dict, Any
+"""
+User API routes for user management.
+"""
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from app.dependencies.permissions import get_current_user, has_permission, get_current_active_user
+
+from app.domains.users.service import user_service
+from app.core.permissions import has_permission, get_current_active_user
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserWithPermissions
-from app.services.user import get_users, get_user_by_id, create_user, update_user, delete_user
-from app.utils.formatting import ensure_object_id
 
 router = APIRouter()
 
@@ -15,115 +17,201 @@ async def read_users(
         limit: int = 100,
         email: Optional[str] = None,
         role_id: Optional[str] = None,
-        current_user: Dict[str, Any] = Depends(has_permission("users:read"))
+        current_user: dict = Depends(has_permission("users:read"))
 ):
     """
-    Get all users with optional filtering
+    Get all users with optional filtering.
+
+    Args:
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        email: Filter by email pattern
+        role_id: Filter by role ID
+        current_user: Current user from token
+
+    Returns:
+        List of users
     """
-    users = await get_users(skip, limit, email, role_id)
-    return users
+    try:
+        users = await user_service.get_users(skip, limit, email, role_id)
+        return users
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching users: {str(e)}"
+        )
 
 
 @router.get("/me", response_model=UserResponse)
-async def read_users_me(current_user: Dict[str, Any] = Depends(get_current_active_user)):
+async def read_users_me(current_user: dict = Depends(get_current_active_user)):
     """
-    Get current user profile
+    Get current user profile.
+
+    Args:
+        current_user: Current user from token
+
+    Returns:
+        Current user profile
     """
-    # User already formatted by dependency
     return current_user
 
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def read_user(
         user_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("users:read"))
+        current_user: dict = Depends(has_permission("users:read"))
 ):
     """
-    Get user by ID
+    Get user by ID.
+
+    Args:
+        user_id: User ID
+        current_user: Current user from token
+
+    Returns:
+        User
+
+    Raises:
+        HTTPException: If user not found
     """
-    # Use the improved get_user_by_id that handles different ID formats
-    user = await get_user_by_id(user_id)
-    if not user:
+    try:
+        user = await user_service.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {user_id} not found"
+            )
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching user: {str(e)}"
         )
-    return user
 
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_new_user(
         user_data: UserCreate,
-        current_user: Dict[str, Any] = Depends(has_permission("users:write"))
+        current_user: dict = Depends(has_permission("users:write"))
 ):
     """
-    Create new user
-    """
-    # Check if email already exists
-    from app.services.user import get_user_by_email
-    existing_user = await get_user_by_email(user_data.email)
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+    Create new user.
 
-    return await create_user(user_data.model_dump())
+    Args:
+        user_data: User creation data
+        current_user: Current user from token
+
+    Returns:
+        Created user
+    """
+    try:
+        user = await user_service.create_user(user_data.model_dump())
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating user: {str(e)}"
+        )
 
 
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_existing_user(
         user_id: str,
         user_data: UserUpdate,
-        current_user: Dict[str, Any] = Depends(has_permission("users:write"))
+        current_user: dict = Depends(has_permission("users:write"))
 ):
     """
-    Update existing user
-    """
-    # First check if user exists to provide better error message
-    existing_user = await get_user_by_id(user_id)
-    if not existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} not found"
-        )
+    Update existing user.
 
-    updated_user = await update_user(user_id, user_data.model_dump(exclude_unset=True))
-    if not updated_user:
+    Args:
+        user_id: User ID
+        user_data: User update data
+        current_user: Current user from token
+
+    Returns:
+        Updated user
+
+    Raises:
+        HTTPException: If user not found
+    """
+    try:
+        # Check if user exists
+        existing_user = await user_service.get_user_by_id(user_id)
+        if not existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {user_id} not found"
+            )
+
+        # Update user
+        updated_user = await user_service.update_user(user_id, user_data.model_dump(exclude_unset=True))
+        if not updated_user:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error updating user"
+            )
+
+        return updated_user
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error updating user"
+            detail=f"Error updating user: {str(e)}"
         )
-    return updated_user
 
 
 @router.delete("/{user_id}", response_model=bool)
 async def delete_existing_user(
         user_id: str,
-        current_user: Dict[str, Any] = Depends(has_permission("users:delete"))
+        current_user: dict = Depends(has_permission("users:delete"))
 ):
     """
-    Delete user
+    Delete user.
+
+    Args:
+        user_id: User ID
+        current_user: Current user from token
+
+    Returns:
+        True if user was deleted
+
+    Raises:
+        HTTPException: If user not found or cannot be deleted
     """
-    # Check if user exists first
-    existing_user = await get_user_by_id(user_id)
-    if not existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} not found"
-        )
+    try:
+        # Check if user exists
+        existing_user = await user_service.get_user_by_id(user_id)
+        if not existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {user_id} not found"
+            )
 
-    # Check if user is trying to delete themselves
-    if str(current_user["_id"]) == user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete your own account"
-        )
+        # Check if user is trying to delete themselves
+        if str(current_user["_id"]) == user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete your own account"
+            )
 
-    result = await delete_user(user_id)
-    if not result:
+        # Delete user
+        result = await user_service.delete_user(user_id)
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error deleting user"
+            )
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error deleting user"
+            detail=f"Error deleting user: {str(e)}"
         )
-    return result

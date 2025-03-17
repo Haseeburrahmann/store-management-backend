@@ -1,27 +1,51 @@
+"""
+Configuration settings for the application.
+"""
 import os
 from pydantic_settings import BaseSettings
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Union
 
 
 class Settings(BaseSettings):
+    """
+    Application settings with default values.
+    Values can be overridden by environment variables.
+    """
+    # API settings
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "Store Management System"
-    SECRET_KEY: str = os.environ.get("SECRET_KEY", "your-secret-key")
+
+    # Security settings
+    SECRET_KEY: str = os.environ.get("SECRET_KEY", "your-secret-key-change-in-production")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # MongoDB settings - directly use os.environ
-    database_url: str = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
-    database_name: str = os.environ.get("MONGODB_DB", "store_management")
+    # CORS settings
+    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:4200", "http://localhost:3000"]
+
+    # MongoDB settings
+    MONGODB_URL: str = os.environ.get("MONGODB_URL", "mongodb://localhost:27017")
+    MONGODB_DB: str = os.environ.get("MONGODB_DB", "store_management")
+
+    # Logging settings
+    LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "INFO")
 
     class Config:
         env_file = ".env"
-        extra = "ignore"
         env_file_encoding = "utf-8"
-        env_ignore_empty = True
+        extra = "ignore"
 
+
+# Create settings instance
 settings = Settings()
 
-# Print debug info at startup
-print(f"DEBUG - MONGODB_URL from environ: {os.environ.get('MONGODB_URL', 'not set')}")
-print(f"DEBUG - MONGODB_URL from settings: {settings.database_url}")
+
+# Print configuration summary at startup
+def print_config_info():
+    """Print configuration information at startup."""
+    print(f"API Version: {settings.API_V1_STR}")
+    print(f"Project Name: {settings.PROJECT_NAME}")
+    print(f"MongoDB URL: {settings.MONGODB_URL}")
+    print(f"MongoDB Database: {settings.MONGODB_DB}")
+    print(f"CORS Origins: {settings.BACKEND_CORS_ORIGINS}")
+    print(f"Log Level: {settings.LOG_LEVEL}")

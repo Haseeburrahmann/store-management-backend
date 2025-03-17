@@ -1,63 +1,78 @@
-# app/api/auth/router.py
+"""
+Auth API routes for authentication and authorization.
+"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from datetime import timedelta
 
-from app.core.config import settings
-from app.core.security import create_access_token
+from app.domains.auth.service import auth_service
+from app.domains.users.service import user_service
+from app.core.permissions import get_current_active_user
 from app.schemas.auth import Token
 from app.schemas.user import UserCreate, UserResponse
-from app.services.auth import authenticate_user
-from app.services.user import create_user, get_user_by_email
-from app.dependencies.permissions import get_current_active_user
 
 router = APIRouter()
 
 
 @router.post("/login", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = await authenticate_user(form_data.username, form_data.password)
-    if not user:
+    """
+    Login with username (email) and password to get access token.
+
+    Args:
+        form_data: OAuth2 form with username and password
+
+    Returns:
+        Access token and token type
+    """
+    try:
+        # The username field in OAuth2PasswordRequestForm contains the email
+        result = await auth_service.login(form_data.username, form_data.password)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login error: {str(e)}"
         )
-
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        subject=str(user["_id"]), expires_delta=access_token_expires
-    )
-
-    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @router.post("/register", response_model=UserResponse)
 async def register_user(user_in: UserCreate):
-    # Check if user already exists
-    existing_user = await get_user_by_email(user_in.email)
-    if existing_user:
+    """
+    Register a new user.
+
+    Args:
+        user_in: User creation data
+
+    Returns:
+        Created user
+    """
+    try:
+        # Convert to dict
+        user_dict = user_in.model_dump()
+
+        # Register user
+        user = await auth_service.register(user_dict)
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration error: {str(e)}"
         )
-
-    # Convert to dict for service function
-    user_dict = user_in.model_dump()
-
-    # Get the employee role
-    from app.services.role import get_role_by_name
-    employee_role = await get_role_by_name("Employee")
-    if employee_role:
-        user_dict["role_id"] = str(employee_role["_id"])
-
-    # Create user
-    user = await create_user(user_dict)
-
-    # Return user directly - it's already in dict format
-    return user
 
 
 @router.get("/me", response_model=UserResponse)
 async def read_users_me(current_user: dict = Depends(get_current_active_user)):
+    """
+    Get current user profile.
+
+    Args:
+        current_user: Current user from token
+
+    Returns:
+        Current user profile
+    """
     return current_user

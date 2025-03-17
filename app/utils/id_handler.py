@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional, Union, Tuple
 from bson import ObjectId
 from fastapi import HTTPException, status
 
-
 class IdHandler:
     """
     Centralized service for handling MongoDB ObjectIds consistently throughout the application.
